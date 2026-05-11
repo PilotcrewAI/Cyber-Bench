@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyber-bench"
+version = "0.1.0"
+description = "Multi-service web CTF benchmark runner for API-driven agents."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+cyberbench = "cyberbench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cyberbench*"]
