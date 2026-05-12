@@ -64,6 +64,19 @@ jq . runs/<bundle_id>/<run-folder>/result.json
 tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 ```
 
+## Transcript viewer
+
+For an interactive step-through of agent turns (plus the run summary from
+`result.json`), start the small local server and open the URL it prints:
+
+```bash
+python transcript-viewer/server.py
+```
+
+Defaults to http://127.0.0.1:8765/ and reads under `runs/`. Choose bundle and run
+from the dropdowns; **Reload** re-reads files from disk. Optional flags:
+`--port`, `--runs-dir`, `--repo-root` (see `python transcript-viewer/server.py --help`).
+
 ## Public Source Archives
 
 Raw public CTF archives are configured in

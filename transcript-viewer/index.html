@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cyber-Bench transcript viewer</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --bad: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .file-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      min-width: 200px;
+    }
+    button {
+      background: var(--border);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .nav-stats {
+      font-size: 0.8rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    select.jump {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 0.85rem;
+      max-width: 280px;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--border);
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .badge.start { background: #1f4d7a; color: #a8d4ff; }
+    .badge.finish { background: #5a3d1f; color: #ffd89b; }
+    .badge.turn { background: #2d3f5c; color: #b8d4ff; }
+    .badge.orphan { background: #5c2d3a; color: #ffb8c8; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .usage {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: normal;
+    }
+    pre, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+    }
+    .block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 10px;
+    }
+    .block h3 {
+      margin: 0 0 8px;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .tool-call {
+      border-left: 3px solid var(--accent);
+      padding-left: 10px;
+      margin-bottom: 12px;
+    }
+    .tool-call:last-child { margin-bottom: 0; }
+    .tool-name { font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+    .hint {
+      margin-top: 40px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      padding: 32px;
+    }
+    .status-ok { color: var(--ok); }
+    .status-bad { color: var(--bad); }
+    .result-panel {
+      margin-bottom: 20px;
+    }
+    .result-panel .path-line {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 10px;
+      word-break: break-all;
+    }
+    .result-panel dl {
+      font-size: 0.88rem;
+      margin: 0;
+    }
+    .result-panel dt {
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    .result-panel dd {
+      margin: 2px 0 0;
+    }
+    .warn-text {
+      color: var(--bad);
+      margin: 0;
+      font-size: 0.9rem;
+    }
+    #error {
+      color: var(--bad);
+      margin: 12px 20px;
+      font-size: 0.9rem;
+    }
+    kbd {
+      font-family: inherit;
+      font-size: 0.85em;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+    }
+    .tablist {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    button.tab {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 6px 6px 0 0;
+      padding: 8px 14px;
+      margin-bottom: -1px;
+      color: var(--muted);
+    }
+    button.tab:hover:not(:disabled) {
+      color: var(--text);
+    }
+    button.tab[aria-selected="true"] {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: rgba(88, 166, 255, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Transcript viewer</h1>
+    <div class="file-row">
+      <label class="nav-stats" for="bundle-select">Bundle</label>
+      <select class="jump" id="bundle-select" title="Bundle"></select>
+      <label class="nav-stats" for="run-select">Run</label>
+      <select class="jump" id="run-select" style="max-width: min(440px, 95vw);" title="Run directory"></select>
+      <button type="button" id="reload-run">Reload</button>
+      <button type="button" id="prev" disabled>← Prev</button>
+      <button type="button" id="next" disabled>Next →</button>
+      <select class="jump" id="jump" disabled title="Jump to slice">
+        <option value="">Jump…</option>
+      </select>
+      <span class="nav-stats" id="stats"></span>
+    </div>
+  </header>
+  <div id="error"></div>
+  <main>
+    <div class="tablist" role="tablist" aria-label="Run details">
+      <button type="button" class="tab" role="tab" id="tab-transcript" aria-selected="true" aria-controls="panel-transcript">
+        Transcript
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-result" aria-selected="false" aria-controls="panel-result">
+        Run summary · result.json
+      </button>
+    </div>
+    <div id="panel-transcript" role="tabpanel" aria-labelledby="tab-transcript">
+      <p class="muted" style="margin: 0 0 16px; color: var(--muted); font-size: 0.82rem;">
+        Reads <span class="mono">runs/&lt;bundle&gt;/&lt;run&gt;/</span> on disk. Start the server with
+        <span class="mono">python transcript-viewer/server.py</span>, then open the URL it prints.
+        Navigate steps with <kbd>←</kbd> <kbd>→</kbd> or <kbd>j</kbd> <kbd>k</kbd> when focus is not in a control.
+      </p>
+      <section id="view"></section>
+      <section class="hint" id="placeholder">
+        Select a bundle and run above. Each run folder must contain <span class="mono">transcript.jsonl</span>.
+      </section>
+    </div>
+    <div id="panel-result" role="tabpanel" aria-labelledby="tab-result" hidden>
+      <section id="result-panel" class="result-panel panel">
+        <h2 style="margin-top: 0;">
+          <span class="badge finish">result.json</span>
+          <span id="run-title" style="font-size: 0.9rem; color: var(--text); font-weight: 500;"></span>
+        </h2>
+        <div class="path-line" id="run-paths"></div>
+        <div id="result-body"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+(function () {
+  "use strict";
+
+  /** @typedef {{ event: string, step?: number } & Record<string, unknown>} TranscriptRecord */
+
+  const bundleSelect = document.getElementById("bundle-select");
+  const runSelect = document.getElementById("run-select");
+  const reloadRunBtn = document.getElementById("reload-run");
+  const prevBtn = document.getElementById("prev");
+  const nextBtn = document.getElementById("next");
+  const jumpSelect = document.getElementById("jump");
+  const statsEl = document.getElementById("stats");
+  const viewEl = document.getElementById("view");
+  const placeholder = document.getElementById("placeholder");
+  const errorEl = document.getElementById("error");
+  const resultBody = document.getElementById("result-body");
+  const runPathsEl = document.getElementById("run-paths");
+  const runTitleEl = document.getElementById("run-title");
+  const tabTranscript = document.getElementById("tab-transcript");
+  const tabResult = document.getElementById("tab-result");
+  const panelTranscript = document.getElementById("panel-transcript");
+  const panelResult = document.getElementById("panel-result");
+
+  /** @param {"transcript" | "result"} id */
+  function setActiveTab(id) {
+    const showResult = id === "result";
+    tabTranscript.setAttribute("aria-selected", String(!showResult));
+    tabResult.setAttribute("aria-selected", String(showResult));
+    panelTranscript.hidden = showResult;
+    panelResult.hidden = !showResult;
+  }
+
+  /** @type {TranscriptRecord[]} */
+  let entries = [];
+  /** @type {ReturnType<typeof buildSlices>} */
+  let slices = [];
+  let sliceIdx = 0;
+
+  /** @type {Record<string, string[]>} */
+  let runIndex = {};
+
+  /**
+   * @param {unknown} v
+   * @returns {string}
+   */
+  function stringifyPretty(v) {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      return String(v);
+    }
+  }
+
+  /**
+   * @param {unknown} raw
+   * @returns {Record<string, unknown> | string}
+   */
+  function maybeParseArguments(raw) {
+    if (typeof raw !== "string") {
+      return /** @type {Record<string, unknown>} */ (raw);
+    }
+    try {
+      return /** @type {Record<string, unknown>} */ (JSON.parse(raw));
+    } catch {
+      return raw;
+    }
+  }
+
+  /**
+   * @param {TranscriptRecord[]} list
+   */
+  function buildSlices(list) {
+    /** @type {Array<{ kind: string; label: string; entries: TranscriptRecord[] }>} */
+    const out = [];
+    let i = 0;
+
+    /**
+     * @param {unknown} idx
+     * @returns {number | undefined}
+     */
+    function asStep(idx) {
+      return typeof idx === "number" && Number.isFinite(idx) ? idx : undefined;
+    }
+
+    while (i < list.length) {
+      const e = list[i];
+      const ev = typeof e.event === "string" ? e.event : "";
+
+      if (ev === "start") {
+        out.push({
+          kind: "start",
+          label: `Start (${e.bundle_id != null ? e.bundle_id : "?"})`,
+          entries: [e],
+        });
+        i += 1;
+        continue;
+      }
+
+      if (ev === "finish") {
+        out.push({
+          kind: "finish",
+          label: "Finish summary",
+          entries: [e],
+        });
+        i += 1;
+        continue;
+      }
+
+      if (ev === "assistant") {
+        const stepVal = asStep(e.step);
+        const consumed = [e];
+        i += 1;
+        while (i < list.length && list[i].event === "tool_result") {
+          const tr = list[i];
+          const ts = asStep(tr.step);
+          if (ts !== stepVal) {
+            break;
+          }
+          consumed.push(tr);
+          i += 1;
+        }
+        const first = consumed[0];
+        const st = typeof first.step === "number" ? first.step : "?";
+        out.push({
+          kind: "turn",
+          label: `Agent turn (step ${st})`,
+          entries: consumed,
+        });
+        continue;
+      }
+
+      if (ev === "tool_result") {
+        out.push({
+          kind: "orphan",
+          label: `Orphan tool_result (step ${e.step ?? "?"})`,
+          entries: [e],
+        });
+        i += 1;
+        continue;
+      }
+
+      out.push({
+        kind: "unknown",
+        label: `Unknown event: ${ev || "(missing)"}`,
+        entries: [e],
+      });
+      i += 1;
+    }
+
+    return out;
+  }
+
+  function setError(msg) {
+    errorEl.textContent = msg;
+  }
+
+  /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string} bundle @param {string} run */
+  function renderResultPanel(result, resultPath, transcriptPath, bundle, run) {
+    runTitleEl.textContent = `${bundle} / ${run}`;
+    runPathsEl.textContent = `${transcriptPath}${resultPath ? ` • ${resultPath}` : ""}`;
+
+    resultBody.innerHTML = "";
+
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      const p = document.createElement("p");
+      p.className = "warn-text";
+      p.textContent =
+        "No result.json in this directory (still running or file missing). Compare with finish line in transcript when present.";
+      resultBody.appendChild(p);
+      return;
+    }
+
+    /** @type {Record<string, unknown>} */
+    const r = /** @type {Record<string, unknown>} */ (result);
+    const dl = document.createElement("dl");
+
+    /** @param {string} label @param {unknown} val */
+    function row(label, val) {
+      if (val === undefined) {
+        return;
+      }
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent =
+        typeof val === "object" ? stringifyPretty(val) : String(val);
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    }
+
+    row("status", r.status);
+    row("bundle_id", r.bundle_id);
+    row("model", r.model);
+    row("steps", r.steps);
+    row("elapsed_seconds", r.elapsed_seconds);
+    row("cost_usd", r.cost_usd);
+    row("prompt_tokens", r.prompt_tokens);
+    row("completion_tokens", r.completion_tokens);
+    row("solved_service_count", r.solved_service_count);
+    row("scored_service_count", r.scored_service_count);
+    row("solved_service_ids", r.solved_service_ids);
+    row("unsolved_service_ids", r.unsolved_service_ids);
+
+    resultBody.appendChild(dl);
+
+    const full = document.createElement("details");
+    full.style.marginTop = "12px";
+    const sum = document.createElement("summary");
+    sum.style.cursor = "pointer";
+    sum.style.color = "var(--muted)";
+    sum.style.fontSize = "0.8rem";
+    sum.textContent = "Full result.json";
+    full.appendChild(sum);
+    const pre = document.createElement("pre");
+    pre.className = "mono";
+    setPreText(pre, stringifyPretty(result));
+    full.appendChild(pre);
+    resultBody.appendChild(full);
+  }
+
+  function hideResultPanel() {
+    resultBody.innerHTML = "";
+    runPathsEl.textContent = "";
+    runTitleEl.textContent = "";
+  }
+
+  /** @param {TranscriptRecord[]} recs */
+  function loadEntries(recs) {
+    try {
+      setError("");
+      entries = recs;
+      slices = buildSlices(entries);
+      sliceIdx = 0;
+      updateNav();
+      renderSlice();
+    } catch (e) {
+      entries = [];
+      slices = [];
+      sliceIdx = 0;
+      updateNav();
+      viewEl.innerHTML = "";
+      placeholder.style.display = "block";
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function fetchRunIndex() {
+    const resp = await fetch("/api/index");
+    if (!resp.ok) {
+      throw new Error(`Failed to load /api/index (${resp.status})`);
+    }
+    const data = await resp.json();
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("Invalid /api/index response");
+    }
+    const bundles = data.bundles;
+    if (!bundles || typeof bundles !== "object" || Array.isArray(bundles)) {
+      throw new Error("Invalid bundles in /api/index");
+    }
+    /** @type {Record<string, string[]>} */
+    const idx = {};
+    for (const k of Object.keys(bundles)) {
+      const arr = bundles[k];
+      if (Array.isArray(arr)) {
+        idx[k] = arr.filter((x) => typeof x === "string");
+      }
+    }
+    return idx;
+  }
+
+  async function loadRunFromServer() {
+    const bundle = bundleSelect.value;
+    const run = runSelect.value;
+    if (!bundle || !run) {
+      hideResultPanel();
+      entries = [];
+      slices = [];
+      sliceIdx = 0;
+      updateNav();
+      viewEl.innerHTML = "";
+      placeholder.style.display = "block";
+      setActiveTab("transcript");
+      return;
+    }
+    setError("");
+    const url = `/api/run?bundle=${encodeURIComponent(bundle)}&run=${encodeURIComponent(run)}`;
+    let resp;
+    try {
+      resp = await fetch(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      hideResultPanel();
+      return;
+    }
+    let data;
+    try {
+      data = await resp.json();
+    } catch {
+      setError("Invalid JSON from /api/run");
+      hideResultPanel();
+      return;
+    }
+    if (!resp.ok) {
+      const err = typeof data.error === "string" ? data.error : resp.statusText;
+      setError(err);
+      entries = [];
+      slices = [];
+      sliceIdx = 0;
+      updateNav();
+      viewEl.innerHTML = "";
+      placeholder.style.display = "block";
+      hideResultPanel();
+      return;
+    }
+    const tr = data.transcript;
+    if (!Array.isArray(tr)) {
+      setError("Response missing transcript array");
+      hideResultPanel();
+      return;
+    }
+    /** @type {TranscriptRecord[]} */
+    const recs = [];
+    for (let i = 0; i < tr.length; i++) {
+      const row = tr[i];
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        setError(`transcript[${i}] is not an object`);
+        hideResultPanel();
+        return;
+      }
+      recs.push(/** @type {TranscriptRecord} */ (row));
+    }
+    loadEntries(recs);
+    renderResultPanel(
+      data.result,
+      data.result_path != null ? String(data.result_path) : null,
+      data.transcript_path != null ? String(data.transcript_path) : "",
+      bundle,
+      run,
+    );
+    setActiveTab("transcript");
+  }
+
+  function populateRunSelect(bundle) {
+    runSelect.innerHTML = "";
+    const runs = runIndex[bundle] || [];
+    for (const r of runs) {
+      const opt = document.createElement("option");
+      opt.value = r;
+      opt.textContent = r;
+      runSelect.appendChild(opt);
+    }
+  }
+
+  async function bootstrapIndex() {
+    try {
+      setError("");
+      runIndex = await fetchRunIndex();
+      bundleSelect.innerHTML = "";
+      const names = Object.keys(runIndex).sort();
+      if (names.length === 0) {
+        setError("No runs found: add runs/<bundle>/<id>/transcript.jsonl or pass --runs-dir.");
+        reloadRunBtn.disabled = true;
+        hideResultPanel();
+        setActiveTab("transcript");
+        return;
+      }
+      reloadRunBtn.disabled = false;
+      for (const b of names) {
+        const opt = document.createElement("option");
+        opt.value = b;
+        opt.textContent = b;
+        bundleSelect.appendChild(opt);
+      }
+      populateRunSelect(bundleSelect.value);
+      await loadRunFromServer();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      reloadRunBtn.disabled = true;
+      hideResultPanel();
+      setActiveTab("transcript");
+    }
+  }
+
+  function updateNav() {
+    const n = slices.length;
+    const hasData = n > 0;
+    prevBtn.disabled = !hasData || sliceIdx <= 0;
+    nextBtn.disabled = !hasData || sliceIdx >= n - 1;
+    jumpSelect.disabled = !hasData;
+    if (hasData) {
+      statsEl.textContent = `${sliceIdx + 1} / ${n}`;
+    } else {
+      statsEl.textContent = "";
+    }
+
+    jumpSelect.innerHTML = "";
+    const placeholderOpt = document.createElement("option");
+    placeholderOpt.value = "";
+    placeholderOpt.textContent = "Jump…";
+    jumpSelect.appendChild(placeholderOpt);
+    for (let i = 0; i < n; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = slices[i].label;
+      jumpSelect.appendChild(opt);
+    }
+    jumpSelect.value = String(sliceIdx);
+  }
+
+  /** @param {HTMLElement} el */
+  /** @param {string} txt */
+  function setPreText(el, txt) {
+    el.textContent = txt;
+  }
+
+  /**
+   * @param {TranscriptRecord} entry
+   * @returns {HTMLElement}
+   */
+  function renderAssistant(entry) {
+    const wrap = document.createElement("div");
+    wrap.className = "panel";
+
+    const h2 = document.createElement("h2");
+    const badge = document.createElement("span");
+    badge.className = "badge turn";
+    badge.textContent = "Assistant";
+    h2.appendChild(badge);
+    if (typeof entry.step === "number") {
+      h2.appendChild(document.createTextNode(` Step ${entry.step}`));
+    }
+    const u = entry.usage;
+    if (u && typeof u === "object" && !Array.isArray(u)) {
+      /** @type {Record<string, unknown>} */
+      const usage = /** @type {Record<string, unknown>} */ (u);
+      const parts = [];
+      if (usage.total_tokens != null) {
+        parts.push(`tokens ${usage.total_tokens}`);
+      }
+      if (usage.cost_usd != null) {
+        parts.push(`~$${usage.cost_usd}`);
+      }
+      if (parts.length) {
+        const span = document.createElement("span");
+        span.className = "usage";
+        span.textContent = ` (${parts.join(", ")})`;
+        h2.appendChild(span);
+      }
+    }
+    wrap.appendChild(h2);
+
+    const msg = entry.message;
+    if (msg && typeof msg === "object") {
+      /** @type {Record<string, unknown>} */
+      const m = /** @type {Record<string, unknown>} */ (msg);
+      const content = m.content;
+      if (content !== null && content !== undefined && String(content).length > 0) {
+        const block = document.createElement("div");
+        block.className = "block";
+        const h3 = document.createElement("h3");
+        h3.textContent = "Message";
+        block.appendChild(h3);
+        const pre = document.createElement("pre");
+        setPreText(pre, typeof content === "string" ? content : stringifyPretty(content));
+        block.appendChild(pre);
+        wrap.appendChild(block);
+      }
+
+      const toolCalls = m.tool_calls;
+      if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+        const block = document.createElement("div");
+        block.className = "block";
+        const h3 = document.createElement("h3");
+        h3.textContent = `Tool calls (${toolCalls.length})`;
+        block.appendChild(h3);
+        for (const tc of toolCalls) {
+          if (!tc || typeof tc !== "object") {
+            continue;
+          }
+          /** @type {Record<string, unknown>} */
+          const t = /** @type {Record<string, unknown>} */ (tc);
+          const fn = t.function;
+          const row = document.createElement("div");
+          row.className = "tool-call";
+          const nameEl = document.createElement("div");
+          nameEl.className = "tool-name";
+          if (fn && typeof fn === "object") {
+            const f = /** @type {Record<string, unknown>} */ (fn);
+            nameEl.textContent = typeof f.name === "string" ? f.name : "(tool)";
+            const args = maybeParseArguments(f.arguments);
+            const pre = document.createElement("pre");
+            pre.className = "mono";
+            setPreText(
+              pre,
+              typeof args === "string" ? args : stringifyPretty(args),
+            );
+            row.appendChild(nameEl);
+            row.appendChild(pre);
+          } else {
+            nameEl.textContent = "(bad tool_call)";
+            row.appendChild(nameEl);
+          }
+          block.appendChild(row);
+        }
+        wrap.appendChild(block);
+      }
+    }
+
+    const raw = document.createElement("details");
+    raw.style.marginTop = "12px";
+    const summary = document.createElement("summary");
+    summary.style.cursor = "pointer";
+    summary.style.color = "var(--muted)";
+    summary.style.fontSize = "0.8rem";
+    summary.textContent = "Raw assistant record";
+    raw.appendChild(summary);
+    const pre = document.createElement("pre");
+    pre.className = "mono";
+    setPreText(pre, stringifyPretty(entry));
+    raw.appendChild(pre);
+    wrap.appendChild(raw);
+
+    return wrap;
+  }
+
+  /**
+   * @param {TranscriptRecord} entry
+   * @param {number} index
+   * @param {number} total
+   * @returns {HTMLElement}
+   */
+  function renderToolResult(entry, index, total) {
+    const wrap = document.createElement("div");
+    wrap.className = "panel";
+
+    const h2 = document.createElement("h2");
+    const badge = document.createElement("span");
+    badge.className = "badge turn";
+    badge.textContent = "Tool result";
+    h2.appendChild(badge);
+    if (total > 1) {
+      h2.appendChild(document.createTextNode(` (${index + 1} / ${total})`));
+    }
+    if (typeof entry.step === "number") {
+      h2.appendChild(document.createTextNode(` Step ${entry.step}`));
+    }
+    wrap.appendChild(h2);
+
+    const r = entry.result;
+    if (!r || typeof r !== "object") {
+      const pre = document.createElement("pre");
+      setPreText(pre, stringifyPretty(entry.result));
+      wrap.appendChild(pre);
+      return wrap;
+    }
+
+    /** @type {Record<string, unknown>} */
+    const res = /** @type {Record<string, unknown>} */ (r);
+
+    if ("elapsed_seconds" in res) {
+      const row = document.createElement("div");
+      row.style.fontSize = "0.82rem";
+      row.style.marginBottom = "8px";
+
+      const ok = Boolean(res.ok);
+      const timedOut = Boolean(res.timed_out);
+      const span = document.createElement("span");
+      span.textContent =
+        `${ok ? "OK" : "FAIL"} • exit ${res.exit_code ?? "?"} • ` +
+        `${Number(res.elapsed_seconds).toFixed(2)}s`;
+      span.className = ok && !timedOut ? "status-ok" : "status-bad";
+      row.appendChild(span);
+      if (timedOut) {
+        row.appendChild(document.createTextNode(" • timed out"));
+      }
+      wrap.appendChild(row);
+    }
+
+    if ("correct" in res) {
+      const row = document.createElement("div");
+      row.style.fontSize = "0.82rem";
+      row.style.marginBottom = "8px";
+      const correct = Boolean(res.correct);
+      row.className = correct ? "status-ok" : "status-bad";
+      row.textContent =
+        `submit_flag → correct=${correct}, solved=${res.solved_count ?? "?"} (${res.ok ? "rpc ok" : "rpc failed"})`;
+      wrap.appendChild(row);
+    }
+
+    for (const key of ["stdout", "stderr"]) {
+      const val = res[key];
+      if (typeof val !== "string" || val.length === 0) {
+        continue;
+      }
+      const block = document.createElement("div");
+      block.className = "block";
+      const h3 = document.createElement("h3");
+      h3.textContent = key;
+      block.appendChild(h3);
+      const pre = document.createElement("pre");
+      setPreText(pre, val);
+      block.appendChild(pre);
+      wrap.appendChild(block);
+    }
+
+    const leftover = { ...res };
+    delete leftover.ok;
+    delete leftover.exit_code;
+    delete leftover.elapsed_seconds;
+    delete leftover.timed_out;
+    delete leftover.stderr;
+    delete leftover.stdout;
+    delete leftover.correct;
+    delete leftover.solved_count;
+
+    if (Object.keys(leftover).length > 0) {
+      const block = document.createElement("div");
+      block.className = "block";
+      const h3 = document.createElement("h3");
+      h3.textContent = "Other fields";
+      block.appendChild(h3);
+      const pre = document.createElement("pre");
+      setPreText(pre, stringifyPretty(leftover));
+      block.appendChild(pre);
+      wrap.appendChild(block);
+    }
+
+    const raw = document.createElement("details");
+    raw.style.marginTop = "12px";
+    const summary = document.createElement("summary");
+    summary.style.cursor = "pointer";
+    summary.style.color = "var(--muted)";
+    summary.style.fontSize = "0.8rem";
+    summary.textContent = "Raw result object";
+    raw.appendChild(summary);
+    const pre = document.createElement("pre");
+    setPreText(pre, stringifyPretty(r));
+    raw.appendChild(pre);
+    wrap.appendChild(raw);
+
+    return wrap;
+  }
+
+  /** @param {TranscriptRecord} entry */
+  function renderStart(entry) {
+    const wrap = document.createElement("div");
+    wrap.className = "panel";
+    const h2 = document.createElement("h2");
+    const badge = document.createElement("span");
+    badge.className = "badge start";
+    badge.textContent = "Start";
+    h2.appendChild(badge);
+    h2.appendChild(
+      document.createTextNode(` ${entry.model != null ? entry.model : ""}`),
+    );
+    wrap.appendChild(h2);
+    const pre = document.createElement("pre");
+    setPreText(pre, stringifyPretty(entry));
+    wrap.appendChild(pre);
+    return wrap;
+  }
+
+  /** @param {TranscriptRecord} entry */
+  function renderFinish(entry) {
+    const wrap = document.createElement("div");
+    wrap.className = "panel";
+    const h2 = document.createElement("h2");
+    const badge = document.createElement("span");
+    badge.className = "badge finish";
+    badge.textContent = "Finish";
+    h2.appendChild(badge);
+    wrap.appendChild(h2);
+    const res = entry.result;
+    if (res && typeof res === "object" && !Array.isArray(res)) {
+      /** @type {Record<string, unknown>} */
+      const r = /** @type {Record<string, unknown>} */ (res);
+      const dl = document.createElement("dl");
+      dl.style.fontSize = "0.88rem";
+      dl.style.margin = "8px 0 0";
+
+      /** @param {string} label @param {unknown} val */
+      function row(label, val) {
+        if (val === undefined) {
+          return;
+        }
+        const dt = document.createElement("dt");
+        dt.style.color = "var(--muted)";
+        dt.style.marginTop = "8px";
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.style.margin = "2px 0 0";
+        dd.textContent =
+          typeof val === "object" ? stringifyPretty(val) : String(val);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      row("status", r.status);
+      row("elapsed_seconds", r.elapsed_seconds);
+      row("steps", r.steps);
+      row("cost_usd", r.cost_usd);
+      row("prompt_tokens", r.prompt_tokens);
+      row("completion_tokens", r.completion_tokens);
+      row("solved_service_count", r.solved_service_count);
+      row("scored_service_count", r.scored_service_count);
+      row("solved_service_ids", r.solved_service_ids);
+      row("unsolved_service_ids", r.unsolved_service_ids);
+      wrap.appendChild(dl);
+    } else {
+      const pre = document.createElement("pre");
+      setPreText(pre, stringifyPretty(entry));
+      wrap.appendChild(pre);
+    }
+    return wrap;
+  }
+
+  function renderSlice() {
+    viewEl.innerHTML = "";
+    if (!slices.length) {
+      placeholder.style.display = "block";
+      return;
+    }
+    placeholder.style.display = "none";
+
+    const sl = slices[sliceIdx];
+    if (!sl) {
+      return;
+    }
+
+    for (const entry of sl.entries) {
+      const ev =
+        typeof entry.event === "string" ? /** @type {string} */ (entry.event) : "";
+      /** @type {HTMLElement | undefined} */
+      let node;
+
+      switch (ev) {
+        case "start":
+          node = renderStart(entry);
+          break;
+        case "finish":
+          node = renderFinish(entry);
+          break;
+        case "assistant":
+          node = renderAssistant(entry);
+          break;
+        case "tool_result": {
+          const tools = sl.entries.filter((e) => e.event === "tool_result");
+          const toolIdx = tools.indexOf(entry);
+          node = renderToolResult(
+            entry,
+            toolIdx < 0 ? 0 : toolIdx,
+            tools.length,
+          );
+          break;
+        }
+        default: {
+          const wrap = document.createElement("div");
+          wrap.className = "panel";
+          const badge = document.createElement("span");
+          badge.className = "badge orphan";
+          badge.textContent = ev || "record";
+          wrap.appendChild(badge);
+          const pre = document.createElement("pre");
+          setPreText(pre, stringifyPretty(entry));
+          wrap.appendChild(pre);
+          node = wrap;
+        }
+      }
+
+      if (node) {
+        viewEl.appendChild(node);
+      }
+    }
+    window.scrollTo(0, 0);
+  }
+
+  function go(delta) {
+    const next = sliceIdx + delta;
+    if (next < 0 || next >= slices.length) {
+      return;
+    }
+    sliceIdx = next;
+    updateNav();
+    renderSlice();
+  }
+
+  prevBtn.addEventListener("click", () => go(-1));
+  nextBtn.addEventListener("click", () => go(1));
+
+  jumpSelect.addEventListener("change", () => {
+    const v = jumpSelect.value;
+    if (!v) {
+      return;
+    }
+    sliceIdx = Math.max(
+      0,
+      Math.min(slices.length - 1, parseInt(v, 10) || 0),
+    );
+    updateNav();
+    renderSlice();
+  });
+
+  bundleSelect.addEventListener("change", async () => {
+    populateRunSelect(bundleSelect.value);
+    await loadRunFromServer();
+  });
+
+  runSelect.addEventListener("change", async () => {
+    await loadRunFromServer();
+  });
+
+  reloadRunBtn.addEventListener("click", async () => {
+    await loadRunFromServer();
+  });
+
+  tabTranscript.addEventListener("click", () => setActiveTab("transcript"));
+  tabResult.addEventListener("click", () => setActiveTab("result"));
+
+  document.addEventListener("keydown", (ev) => {
+    if (
+      ev.target instanceof HTMLElement &&
+      ev.target.getAttribute("role") === "tab"
+    ) {
+      return;
+    }
+    if (
+      ev.target instanceof HTMLInputElement ||
+      ev.target instanceof HTMLSelectElement ||
+      ev.target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
+    if (ev.key === "ArrowLeft" || ev.key === "k") {
+      go(-1);
+    } else if (ev.key === "ArrowRight" || ev.key === "j") {
+      go(1);
+    }
+  });
+
+  void bootstrapIndex();
+
+})();
+  </script>
+</body>
+</html>
