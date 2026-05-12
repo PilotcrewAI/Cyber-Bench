@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 
@@ -40,5 +41,11 @@ def resolve_model(cli_model: str | None) -> str:
     return DEFAULT_MODEL
 
 
-def model_slug(model: str) -> str:
-    return model.replace(":", "-").replace("/", "-")
+def path_slug(segment: str) -> str:
+    """Single path segment derived from a model id, bundle id, or similar."""
+    return segment.replace(":", "-").replace("/", "-")
+
+
+def local_timestamp_slug() -> str:
+    """Local wall-clock time on this machine (sortable, safe for directory names)."""
+    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")

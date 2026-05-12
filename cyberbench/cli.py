@@ -3,14 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
-from cyberbench.config import load_dotenv, model_slug, require_openrouter_key, resolve_model
+from cyberbench.config import (
+    load_dotenv,
+    local_timestamp_slug,
+    path_slug,
+    require_openrouter_key,
+    resolve_model,
+)
 from cyberbench.manifest import load_manifest, validate_manifest
 from cyberbench.openrouter import OpenRouterClient, first_message
 from cyberbench.runner import AgentRunner
-from cyberbench.runtime.docker import DockerRuntime
+from cyberbench.runtime.docker import DEFAULT_ATTACKER_IMAGE, DockerRuntime
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,7 +38,6 @@ def main(argv: list[str] | None = None) -> int:
 
     prepare = subparsers.add_parser("prepare-run")
     prepare.add_argument("manifest", type=Path)
-    prepare.add_argument("--run-dir", type=Path, default=None)
 
     run = subparsers.add_parser("run")
     run.add_argument("manifest", type=Path)
@@ -42,8 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="OpenRouter model id (overrides CYBERBENCH_MODEL; default otherwise).",
     )
-    run.add_argument("--run-dir", type=Path, default=None)
-    run.add_argument("--attacker-image", default="python:3.12-slim")
+    run.add_argument("--attacker-image", default=DEFAULT_ATTACKER_IMAGE)
     run.add_argument("--keep-containers", action="store_true")
 
     args = parser.parse_args(argv)
@@ -54,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-bundle":
         return _validate_bundle(args.manifest, strict=args.strict)
     if args.command == "prepare-run":
-        return _prepare_run(args.manifest, args.run_dir)
+        return _prepare_run(args.manifest)
     if args.command == "run":
         return _run(args)
     raise AssertionError(args.command)
@@ -108,14 +111,16 @@ def _validate_bundle(path: Path, *, strict: bool) -> int:
     return 0
 
 
-def _prepare_run(path: Path, run_dir: Path | None) -> int:
+def _prepare_run(path: Path) -> int:
     manifest = load_manifest(path)
     errors = validate_manifest(manifest)
     if errors:
         for error in errors:
             print(f"error: {error}", file=sys.stderr)
         return 1
-    selected_run_dir = run_dir or _default_run_dir(manifest.bundle_id)
+    ts = local_timestamp_slug()
+    bundle_dir = Path("runs") / path_slug(manifest.bundle_id)
+    selected_run_dir = bundle_dir / f"{ts}_prepare"
     runtime = DockerRuntime(manifest, selected_run_dir)
     compose_path = runtime.prepare()
     print(compose_path)
@@ -131,8 +136,9 @@ def _run(args: argparse.Namespace) -> int:
             print(f"error: {error}", file=sys.stderr)
         return 1
     model = resolve_model(args.model)
-    slug = model_slug(model)
-    run_dir = args.run_dir or _default_run_dir(f"{manifest.bundle_id}-{slug}")
+    ts = local_timestamp_slug()
+    bundle_dir = Path("runs") / path_slug(manifest.bundle_id)
+    run_dir = bundle_dir / f"{ts}_{path_slug(model)}"
     runtime = DockerRuntime(manifest, run_dir, attacker_image=args.attacker_image)
     client = OpenRouterClient(api_key)
     runner = AgentRunner(
@@ -150,10 +156,6 @@ def _run(args: argparse.Namespace) -> int:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in {"solved", "budget_exhausted", "timeout", "agent_gave_up"} else 1
-
-
-def _default_run_dir(name: str) -> Path:
-    return Path("runs") / f"{int(time.time())}-{name}"
 
 
 if __name__ == "__main__":

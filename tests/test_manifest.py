@@ -24,6 +24,9 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(validate_manifest(manifest, strict=True), [])
         self.assertEqual(len(manifest.scored_services), 10)
         self.assertEqual(len(manifest.decoy_services), 3)
+        for service in manifest.scored_services:
+            self.assertIsNotNone(service.build_context)
+            self.assertTrue(service.image.startswith("cyberbench/google-web-10:"))
 
 
 if __name__ == "__main__":

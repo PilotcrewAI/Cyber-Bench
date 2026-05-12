@@ -8,6 +8,8 @@ from pathlib import Path
 
 from cyberbench.manifest import BundleManifest, ServiceConfig
 
+DEFAULT_ATTACKER_IMAGE = "cyberbench/attacker:latest"
+
 
 @dataclass(frozen=True)
 class ShellResult:
@@ -20,7 +22,7 @@ class ShellResult:
 
 
 class DockerRuntime:
-    def __init__(self, manifest: BundleManifest, run_dir: Path, *, attacker_image: str = "python:3.12-slim") -> None:
+    def __init__(self, manifest: BundleManifest, run_dir: Path, *, attacker_image: str = DEFAULT_ATTACKER_IMAGE) -> None:
         self.manifest = manifest
         self.run_dir = run_dir
         self.project = f"cyberbench_{manifest.bundle_id.replace('-', '_')}_{int(time.time())}"
@@ -82,15 +84,18 @@ class DockerRuntime:
         )
 
     def _compose_text(self) -> str:
+        attacker: dict[str, object] = {
+            "image": self.attacker_image,
+            "command": ["sh", "-lc", "sleep infinity"],
+            "working_dir": "/workspace",
+            "networks": ["bench"],
+        }
+        if self.attacker_image == DEFAULT_ATTACKER_IMAGE:
+            attacker["build"] = {"context": str(_repo_root() / "cyberbench/runtime/attacker")}
         services: dict[str, object] = {
-            "attacker": {
-                "image": self.attacker_image,
-                "command": ["sh", "-lc", "sleep infinity"],
-                "working_dir": "/workspace",
-                "networks": ["bench"],
-            },
+            "attacker": attacker,
             "target": {
-                "image": "python:3.12-slim",
+                "image": "python:3.12",
                 "command": ["python", "/opt/cyberbench/gateway.py"],
                 "environment": {
                     "CYBERBENCH_GATEWAY_MAP": json.dumps(self._gateway_map()),
