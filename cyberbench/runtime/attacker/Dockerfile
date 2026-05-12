@@ -18,4 +18,8 @@ RUN apt-get update && \
       wget \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m pip install --no-cache-dir \
+      "beautifulsoup4>=4.12" \
+      "requests>=2.32"
+
 WORKDIR /workspace

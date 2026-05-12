@@ -58,7 +58,7 @@ class BundleManifest:
 
     @property
     def decoy_services(self) -> tuple[ServiceConfig, ...]:
-        return tuple(service for service in self.services if not service.scored)
+        return tuple(service for service in self.services if service.role == "decoy")
 
 
 def load_manifest(path: Path) -> BundleManifest:

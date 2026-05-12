@@ -124,8 +124,6 @@ python -m cyberbench.cli run bundles/google-web-10/manifest.json \
   --model openai/gpt-5.4-nano
 ```
 
-Do not run costlier models until the cheap-model artifacts have been inspected.
-
 ## Assets
 
 Raw public CTF downloads belong under ignored `resources/ctf-archives/`.

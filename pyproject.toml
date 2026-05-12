@@ -7,7 +7,10 @@ name = "cyber-bench"
 version = "0.1.0"
 description = "Multi-service web CTF benchmark runner for API-driven agents."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "requests>=2.32",
+]
 
 [project.scripts]
 cyberbench = "cyberbench.cli:main"
