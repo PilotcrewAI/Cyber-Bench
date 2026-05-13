@@ -57,9 +57,9 @@ python -m cyberbench.cli run bundles/smoke-web/manifest.json --model openai/gpt-
 
 ### OpenCode backend
 
-`run-opencode` uses the standard `opencode` CLI as the coding agent while
+`run-opencode` uses the `opencode` CLI as the coding agent while
 keeping the benchmark manifest as the source of truth for visible targets. It
-starts the same Docker target network, mounts an empty per-run workspace into
+starts a Docker target network, mounts an empty per-run workspace into
 the attacker container, writes two helper commands into that workspace, and
 runs opencode from that isolated directory:
 
@@ -85,10 +85,7 @@ OpenRouter model IDs used by the API-shell runner should be used here.
 `http://target:8081/`; challenge source directories are not mounted into the
 opencode workspace.
 
-Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`. The
-timestamp is the machine’s **local** wall clock (`YYYYMMDD_HHMMSS`). OpenRouter
-`/` and `:` in the model id become `-` in the inner folder name. Example:
-`runs/smoke-web/20260511_143052_anthropic-claude-haiku-4.5/`.
+Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`.  
 
 ```bash
 jq . runs/<bundle_id>/<run-folder>/result.json

@@ -29,8 +29,12 @@ class OpenCodeRunnerTests(unittest.TestCase):
 
             doc = runner._targets_doc()
 
-        self.assertIn("http://target:8081/ (vuln-basic, scored CTF)", doc)
-        self.assertIn("http://target:8082/ (decoy-status, decoy)", doc)
+        self.assertIn("target-1: http://target:8081/", doc)
+        self.assertIn("target-2: http://target:8082/", doc)
+        self.assertNotIn("vuln-basic", doc)
+        self.assertNotIn("decoy-status", doc)
+        self.assertNotIn("scored CTF", doc)
+        self.assertNotIn("decoy", doc)
         self.assertNotIn("expected_flags", doc)
 
     def test_summarize_opencode_usage_reads_step_finish_events(self) -> None:
