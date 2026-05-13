@@ -3,7 +3,7 @@
 
 CyberExplorer-style environment: fixed curated bundles,
 multiple exposed web services, scored CTF targets mixed with benign decoys, and
-LLM agents through OpenRouter under wall-clock and model budgets.
+LLM agents through OpenRouter under cost budgets.
 
 ## Configuration
 

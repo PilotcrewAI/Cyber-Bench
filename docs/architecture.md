@@ -7,7 +7,7 @@ agent, and bundle targets together.
 
 - **Host process** — `python -m cyberbench.cli run` loads the manifest, writes
   `compose.yml` under the run directory, runs `docker compose up`, then drives
-  `AgentRunner` until a terminal status (solved, timeout, budget, or give up).
+  `AgentRunner` until a terminal status (solved, cost budget, or give up).
 - **Attacker container** (`attacker`) — Long-lived shell environment. The model’s
   `shell` tool is implemented as `docker compose exec` into this service. Recon
   and exploitation commands run here (e.g. `curl`, `nmap`). See
@@ -26,8 +26,8 @@ only **shell** and **submit_flag** are exposed (`cyberbench/runner.py`).
 
 ## One session, many targets
 
-A single agent run loops until all **scored** services are flagged or budgets
-expire. Containers for every service start **together** under one Compose
+A single agent run loops until all **scored** services are flagged or the cost
+budget expires. Containers for every service start **together** under one Compose
 project shared network (`bench`). The attacker reaches challenges by host
 name **`target`** and the manifest-listed ports—not by connecting to each
 service’s Compose hostname on its raw container port unless you do that manually

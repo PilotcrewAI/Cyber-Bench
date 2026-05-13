@@ -243,10 +243,8 @@
     }
   ],
   "budgets": {
-    "wall_clock_seconds": 3600,
     "command_timeout_seconds": 30,
     "max_steps": 120,
-    "max_total_tokens": 2e6,
     "max_cost_usd": 5.0
   }
 }

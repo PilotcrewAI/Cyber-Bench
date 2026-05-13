@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -57,6 +58,29 @@ class RunnerScoringTests(unittest.TestCase):
 
         self.assertIn("Selected hint level 1", messages[1]["content"])
         self.assertIn("Try the game API first.", messages[1]["content"])
+
+    def test_cost_warning_records_each_threshold_once(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = AgentRunner(
+                manifest=manifest,
+                runtime=object(),
+                client=object(),
+                model="test-model",
+                run_dir=Path(tmp),
+            )
+
+            runner.state.cost_usd = 0.81
+            runner._warn_if_cost_threshold_crossed()
+            runner._warn_if_cost_threshold_crossed()
+
+            events = [
+                json.loads(line)
+                for line in runner.transcript_path.read_text().splitlines()
+                if json.loads(line)["event"] == "cost_warning"
+            ]
+
+        self.assertEqual([event["threshold_percent"] for event in events], [50, 80])
 
 
 if __name__ == "__main__":

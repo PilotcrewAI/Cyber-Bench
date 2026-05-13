@@ -185,7 +185,7 @@ def _run(args: argparse.Namespace) -> int:
         if not args.keep_containers:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["status"] in {"solved", "budget_exhausted", "timeout", "agent_gave_up"} else 1
+    return 0 if result["status"] in {"solved", "budget_exhausted", "agent_gave_up"} else 1
 
 
 def _run_opencode(args: argparse.Namespace) -> int:
@@ -231,7 +231,7 @@ def _run_opencode(args: argparse.Namespace) -> int:
         if not args.keep_containers:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["status"] in {"solved", "agent_stopped", "timeout"} else 1
+    return 0 if result["status"] in {"solved", "agent_stopped", "budget_exhausted"} else 1
 
 
 def _validate_level(manifest: BundleManifest, level: int | None) -> bool:

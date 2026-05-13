@@ -4,8 +4,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
-import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,6 +20,7 @@ from cyberbench.runtime.docker import DockerRuntime
 class OpenCodeRunState:
     solved_service_ids: set[str] = field(default_factory=set)
     submissions: list[dict[str, Any]] = field(default_factory=list)
+    warned_cost_thresholds: set[int] = field(default_factory=set)
     status: str = "running"
 
 
@@ -54,7 +55,6 @@ class OpenCodeRunner:
             )
 
     def run(self) -> dict[str, Any]:
-        started = time.monotonic()
         self._prepare_workspace()
         self._record(
             {
@@ -69,17 +69,16 @@ class OpenCodeRunner:
             self._write_submit_flag([scoring.host_url, scoring.container_url])
             completed = self._run_opencode()
 
-        elapsed = time.monotonic() - started
         if len(self.state.solved_service_ids) == len(self.manifest.scored_services):
             self.state.status = "solved"
-        elif completed["timed_out"]:
-            self.state.status = "timeout"
+        elif completed["budget_exhausted"]:
+            self.state.status = "budget_exhausted"
         elif completed["returncode"] != 0:
             self.state.status = "opencode_error"
         else:
             self.state.status = "agent_stopped"
 
-        result = self._result(elapsed, completed)
+        result = self._result(completed)
         (self.run_dir / "result.json").write_text(json.dumps(result, indent=2, sort_keys=True))
         self._record({"event": "finish", "result": result})
         return result
@@ -104,34 +103,44 @@ class OpenCodeRunner:
         env = os.environ.copy()
         env["OPENROUTER_API_KEY"] = self.openrouter_api_key
         env.setdefault("NO_COLOR", "1")
-        timeout = self.manifest.budgets.wall_clock_seconds
-        self._record({"event": "opencode_start", "command": _redacted_command(cmd), "timeout_seconds": timeout})
-        try:
-            completed = subprocess.run(
-                cmd,
-                cwd=self.workspace,
-                env=env,
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-                check=False,
-            )
-            timed_out = False
-            stdout = completed.stdout
-            stderr = completed.stderr
-            returncode = completed.returncode
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            stdout = exc.stdout or ""
-            stderr = exc.stderr or ""
-            returncode = 124
+        self._record({"event": "opencode_start", "command": _redacted_command(cmd)})
+        process = subprocess.Popen(
+            cmd,
+            cwd=self.workspace,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        stderr_thread = threading.Thread(target=_drain_pipe, args=(process.stderr, stderr_lines), daemon=True)
+        stderr_thread.start()
+        usage = _empty_opencode_usage()
+        budget_exhausted = False
+        assert process.stdout is not None
+        for line in process.stdout:
+            stdout_lines.append(line)
+            if _add_opencode_step_usage(usage, line):
+                self._warn_for_opencode_usage(usage)
+                if self._opencode_budget_exhausted(usage):
+                    budget_exhausted = True
+                    _terminate_process(process)
+                    break
+        remaining_stdout = process.stdout.read()
+        if remaining_stdout:
+            stdout_lines.append(remaining_stdout)
+        returncode = process.wait()
+        stderr_thread.join(timeout=5)
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
         stdout_path.write_text(stdout)
         stderr_path.write_text(stderr)
-        usage = _summarize_opencode_usage(stdout)
+        usage["cost_usd"] = round(float(usage["cost_usd"]), 10)
         output = {
             "event": "opencode_finish",
             "returncode": returncode,
-            "timed_out": timed_out,
+            "budget_exhausted": budget_exhausted,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "usage": usage,
@@ -285,7 +294,29 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
             return None
         return self.manifest.levels.get(self.level)
 
-    def _result(self, elapsed_seconds: float, completed: dict[str, Any]) -> dict[str, Any]:
+    def _warn_for_opencode_usage(self, usage: dict[str, Any]) -> None:
+        max_cost = self.manifest.budgets.max_cost_usd
+        if not max_cost:
+            return
+        usage_ratio = float(usage["cost_usd"]) / max_cost
+        for threshold, message in COST_WARNINGS:
+            if usage_ratio >= threshold / 100 and threshold not in self.state.warned_cost_thresholds:
+                self.state.warned_cost_thresholds.add(threshold)
+                event = {
+                    "event": "cost_warning",
+                    "threshold_percent": threshold,
+                    "cost_usd": usage["cost_usd"],
+                    "max_cost_usd": max_cost,
+                    "message": message,
+                }
+                print(f"warning: {message}", file=sys.stderr)
+                self._record(event)
+
+    def _opencode_budget_exhausted(self, usage: dict[str, Any]) -> bool:
+        max_cost = self.manifest.budgets.max_cost_usd
+        return max_cost is not None and float(usage["cost_usd"]) >= max_cost
+
+    def _result(self, completed: dict[str, Any]) -> dict[str, Any]:
         scored_ids = {service.id for service in self.manifest.scored_services}
         return {
             "backend": "opencode",
@@ -293,14 +324,13 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
             "model": self.model,
             "opencode_model": _opencode_model(self.model),
             "status": self.state.status,
-            "elapsed_seconds": elapsed_seconds,
             "solved_service_ids": sorted(self.state.solved_service_ids),
             "unsolved_service_ids": sorted(scored_ids - self.state.solved_service_ids),
             "scored_service_count": len(scored_ids),
             "solved_service_count": len(self.state.solved_service_ids),
             "submissions": self.state.submissions,
             "opencode_returncode": completed["returncode"],
-            "opencode_timed_out": completed["timed_out"],
+            "opencode_budget_exhausted": completed["budget_exhausted"],
             "opencode_usage": completed["usage"],
             "opencode_stdout_path": completed["stdout_path"],
             "opencode_stderr_path": completed["stderr_path"],
@@ -398,8 +428,24 @@ def _redacted_command(cmd: list[str]) -> list[str]:
     return ["<prompt>" if index == len(cmd) - 1 else value for index, value in enumerate(cmd)]
 
 
-def _summarize_opencode_usage(stdout: str) -> dict[str, Any]:
-    usage = {
+def _drain_pipe(pipe: Any, lines: list[str]) -> None:
+    if pipe is None:
+        return
+    for line in pipe:
+        lines.append(line)
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _empty_opencode_usage() -> dict[str, Any]:
+    return {
         "steps": 0,
         "cost_usd": 0.0,
         "tokens": {
@@ -409,22 +455,30 @@ def _summarize_opencode_usage(stdout: str) -> dict[str, Any]:
             "cache": {"read": 0, "write": 0},
         },
     }
-    for line in stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") != "step_finish":
-            continue
-        part = event.get("part") or {}
-        usage["steps"] += 1
-        usage["cost_usd"] += float(part.get("cost") or 0.0)
-        tokens = part.get("tokens") or {}
-        usage["tokens"]["input"] += int(tokens.get("input") or 0)
-        usage["tokens"]["output"] += int(tokens.get("output") or 0)
-        usage["tokens"]["reasoning"] += int(tokens.get("reasoning") or 0)
-        cache = tokens.get("cache") or {}
-        usage["tokens"]["cache"]["read"] += int(cache.get("read") or 0)
-        usage["tokens"]["cache"]["write"] += int(cache.get("write") or 0)
-    usage["cost_usd"] = round(usage["cost_usd"], 10)
-    return usage
+
+
+def _add_opencode_step_usage(usage: dict[str, Any], line: str) -> bool:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    if event.get("type") != "step_finish":
+        return False
+    part = event.get("part") or {}
+    usage["steps"] += 1
+    usage["cost_usd"] += float(part.get("cost") or 0.0)
+    tokens = part.get("tokens") or {}
+    usage["tokens"]["input"] += int(tokens.get("input") or 0)
+    usage["tokens"]["output"] += int(tokens.get("output") or 0)
+    usage["tokens"]["reasoning"] += int(tokens.get("reasoning") or 0)
+    cache = tokens.get("cache") or {}
+    usage["tokens"]["cache"]["read"] += int(cache.get("read") or 0)
+    usage["tokens"]["cache"]["write"] += int(cache.get("write") or 0)
+    return True
+
+
+COST_WARNINGS: tuple[tuple[int, str], ...] = (
+    (50, "Cost budget half consumed."),
+    (80, "80 percent of the cost budget has been consumed."),
+    (95, "95 percent of the cost budget has been consumed; start submitting flags."),
+)

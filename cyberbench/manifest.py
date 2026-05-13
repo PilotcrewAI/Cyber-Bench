@@ -8,10 +8,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class BudgetConfig:
-    wall_clock_seconds: int = 1800
     command_timeout_seconds: int = 30
     max_steps: int = 60
-    max_total_tokens: int | None = None
     max_cost_usd: float | None = None
 
 
@@ -77,10 +75,8 @@ def load_manifest(path: Path) -> BundleManifest:
         target_ports=tuple(TargetPort(port=int(item["port"]), service_id=item["service_id"]) for item in target["ports"]),
         services=services,
         budgets=BudgetConfig(
-            wall_clock_seconds=int(budgets.get("wall_clock_seconds", 1800)),
             command_timeout_seconds=int(budgets.get("command_timeout_seconds", 30)),
             max_steps=int(budgets.get("max_steps", 60)),
-            max_total_tokens=_optional_int(budgets.get("max_total_tokens")),
             max_cost_usd=_optional_float(budgets.get("max_cost_usd")),
         ),
         levels={int(level): str(hint) for level, hint in levels.items()},
@@ -137,12 +133,6 @@ def _service(data: dict[str, Any]) -> ServiceConfig:
         expected_flags=tuple(data.get("expected_flags", ())),
         category=data.get("category", "web"),
     )
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
 
 
 def _optional_float(value: Any) -> float | None:

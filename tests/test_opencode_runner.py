@@ -1,9 +1,10 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from cyberbench.manifest import load_manifest
-from cyberbench.opencode_runner import OpenCodeRunner, _opencode_model, _summarize_opencode_usage
+from cyberbench.opencode_runner import OpenCodeRunner, _opencode_model
 
 
 class DummyRuntime:
@@ -55,29 +56,52 @@ class OpenCodeRunnerTests(unittest.TestCase):
         self.assertIn("Selected Hint Level 2", doc)
         self.assertIn("Inspect the JSON API routes.", doc)
 
-    def test_summarize_opencode_usage_reads_step_finish_events(self) -> None:
-        stdout = "\n".join(
-            [
-                '{"type":"text","part":{"text":"ignored"}}',
-                (
-                    '{"type":"step_finish","part":{"cost":0.25,'
-                    '"tokens":{"input":1,"output":2,"reasoning":3,"cache":{"read":4,"write":5}}}}'
-                ),
-                (
-                    '{"type":"step_finish","part":{"cost":0.75,'
-                    '"tokens":{"input":10,"output":20,"reasoning":30,"cache":{"read":40,"write":50}}}}'
-                ),
+    def test_opencode_cost_warning_records_each_threshold_once(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = OpenCodeRunner(
+                manifest=manifest,
+                runtime=DummyRuntime(),
+                model="test/model",
+                run_dir=Path(tmp),
+                openrouter_api_key="test-key",
+            )
+
+            runner._warn_for_opencode_usage({"cost_usd": 0.96})
+            runner._warn_for_opencode_usage({"cost_usd": 0.96})
+
+            events = [
+                json.loads(line)
+                for line in runner.transcript_path.read_text().splitlines()
+                if json.loads(line)["event"] == "cost_warning"
             ]
-        )
 
-        usage = _summarize_opencode_usage(stdout)
+        self.assertEqual([event["threshold_percent"] for event in events], [50, 80, 95])
 
-        self.assertEqual(usage["steps"], 2)
-        self.assertEqual(usage["cost_usd"], 1.0)
-        self.assertEqual(usage["tokens"]["input"], 11)
-        self.assertEqual(usage["tokens"]["output"], 22)
-        self.assertEqual(usage["tokens"]["reasoning"], 33)
-        self.assertEqual(usage["tokens"]["cache"], {"read": 44, "write": 55})
+    def test_opencode_cost_budget_exhaustion_uses_standard_status(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = OpenCodeRunner(
+                manifest=manifest,
+                runtime=DummyRuntime(),
+                model="test/model",
+                run_dir=Path(tmp),
+                openrouter_api_key="test-key",
+            )
+
+            self.assertFalse(runner._opencode_budget_exhausted({"cost_usd": 0.99}))
+            self.assertTrue(runner._opencode_budget_exhausted({"cost_usd": 1.0}))
+            result = runner._result(
+                {
+                    "returncode": -15,
+                    "budget_exhausted": True,
+                    "usage": {"cost_usd": 1.0, "steps": 3},
+                    "stdout_path": "stdout.jsonl",
+                    "stderr_path": "stderr.log",
+                }
+            )
+
+        self.assertTrue(result["opencode_budget_exhausted"])
 
 
 if __name__ == "__main__":
