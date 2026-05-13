@@ -3,7 +3,7 @@
 
 CyberExplorer-style environment: fixed curated bundles,
 multiple exposed web services, scored CTF targets mixed with benign decoys, and
-LLM agents through OpenRouter under wall-clock and model budgets.
+LLM agents through OpenRouter under cost budgets.
 
 ## Configuration
 
@@ -38,6 +38,7 @@ python -m cyberbench.cli check-openrouter --model openai/gpt-5-codex
 python -m cyberbench.cli validate-bundle bundles/smoke-web/manifest.json
 python -m cyberbench.cli prepare-run bundles/smoke-web/manifest.json
 python -m cyberbench.cli run bundles/smoke-web/manifest.json
+python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json
 ```
 
 `run` requires Docker with the Compose plugin. It starts a target gateway,
@@ -54,10 +55,37 @@ python -m cyberbench.cli run bundles/smoke-web/manifest.json --model anthropic/c
 python -m cyberbench.cli run bundles/smoke-web/manifest.json --model openai/gpt-5.4-nano
 ```
 
-Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`. The
-timestamp is the machine’s **local** wall clock (`YYYYMMDD_HHMMSS`). OpenRouter
-`/` and `:` in the model id become `-` in the inner folder name. Example:
-`runs/smoke-web/20260511_143052_anthropic-claude-haiku-4.5/`.
+### OpenCode backend
+
+`run-opencode` uses the `opencode` CLI as the coding agent while
+keeping the benchmark manifest as the source of truth for visible targets. It
+starts a Docker target network, mounts an empty per-run workspace into
+the attacker container, writes two helper commands into that workspace, and
+runs opencode from that isolated directory:
+
+- `./bench_shell '<command>'` executes inside the attacker container.
+- `./submit_flag '<flag>'` submits to the Cyber-Bench scorer.
+
+Install opencode separately before using this backend:
+
+```bash
+npm i -g opencode-ai@latest
+```
+
+Then run:
+
+```bash
+python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json \
+  --model anthropic/claude-haiku-4.5
+```
+
+The OpenCode model id is passed as `openrouter/<model>`, so the same
+OpenRouter model IDs used by the API-shell runner should be used here.
+`manifest.target.ports` controls the target URLs shown to opencode, for example
+`http://target:8081/`; challenge source directories are not mounted into the
+opencode workspace.
+
+Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`.  
 
 ```bash
 jq . runs/<bundle_id>/<run-folder>/result.json

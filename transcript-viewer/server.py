@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 VIEWER_ROOT: Final = Path(__file__).resolve().parent
 DEFAULT_REPO_ROOT: Final = VIEWER_ROOT.parent
+BENCHMARK_STATIC_JSON: Final = "benchmark_static.json"
 
 
 class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
@@ -85,6 +86,43 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             out.append(obj)
         return out
 
+    def _read_opencode_lines(self, run_dir: Path) -> list[dict[str, object]]:
+        opath = run_dir / "opencode.stdout.jsonl"
+        if not opath.is_file():
+            return []
+        lines = opath.read_text(encoding="utf-8").splitlines()
+        out: list[dict[str, object]] = []
+        for i, line in enumerate(lines, start=1):
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"opencode.stdout.jsonl: invalid JSON on line {i}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(f"opencode.stdout.jsonl: line {i} is not a JSON object")
+            obj["_opencode_line"] = i
+            out.append(obj)
+        return out
+
+    def _merge_opencode_transcript(
+        self,
+        transcript: list[dict[str, object]],
+        opencode: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if not opencode:
+            return transcript
+        normalized = _normalize_opencode_events(opencode)
+        prefix: list[dict[str, object]] = []
+        suffix: list[dict[str, object]] = []
+        for event in transcript:
+            if event.get("event") in {"opencode_finish", "finish"}:
+                suffix.append(event)
+            else:
+                prefix.append(event)
+        return prefix + normalized + suffix
+
     def _read_result(self, run_dir: Path) -> dict[str, object] | None:
         rpath = run_dir / "result.json"
         if not rpath.is_file():
@@ -96,6 +134,124 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ValueError("result.json: root must be an object")
         return data
+
+    def _first_transcript_start(self, run_dir: Path) -> dict[str, object] | None:
+        tpath = run_dir / "transcript.jsonl"
+        if not tpath.is_file():
+            return None
+        for line in tpath.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and obj.get("event") == "start":
+                return obj
+        return None
+
+    def _benchmark_meta_from_run(self, run_dir: Path) -> dict[str, object]:
+        bundle_id = ""
+        level: int | None = None
+        backend: str | None = None
+        rpath = run_dir / "result.json"
+        if rpath.is_file():
+            try:
+                parsed = json.loads(rpath.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                bundle_id = str(parsed.get("bundle_id") or "")
+                br = parsed.get("backend")
+                backend = str(br) if isinstance(br, str) and br else backend
+        start_ev = self._first_transcript_start(run_dir)
+        if isinstance(start_ev, dict):
+            if not bundle_id:
+                bundle_id = str(start_ev.get("bundle_id") or "")
+            lv = start_ev.get("level")
+            if lv is not None:
+                try:
+                    level = int(lv)
+                except (TypeError, ValueError):
+                    level = None
+            if not backend:
+                sb = start_ev.get("backend")
+                if isinstance(sb, str) and sb:
+                    backend = sb
+        return {"bundle_id": bundle_id, "level": level, "backend": backend, "manifest_path": ""}
+
+    def _load_benchmark_context(self, run_dir: Path) -> dict[str, object]:
+        snap = run_dir / BENCHMARK_STATIC_JSON
+        if snap.is_file():
+            try:
+                raw = json.loads(snap.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                return {
+                    "source": "invalid_snapshot",
+                    "file_path": self._relative_repo(snap),
+                    "notice": f"benchmark_static.json is not valid JSON ({exc}).",
+                    "sections": [],
+                    **self._benchmark_meta_from_run(run_dir),
+                }
+            if isinstance(raw, dict):
+                sections = raw.get("sections")
+                if isinstance(sections, list):
+                    out = {**raw}
+                    out["source"] = "snapshot"
+                    out["file_path"] = self._relative_repo(snap)
+                    return out
+        workspace = run_dir / "workspace"
+        targets = workspace / "TARGETS.md"
+        agent_md = workspace / ".opencode" / "agent" / "cyberbench.md"
+        if targets.is_file() or agent_md.is_file():
+            sections: list[dict[str, object]] = []
+            if agent_md.is_file():
+                sections.append(
+                    {
+                        "id": "agent_config",
+                        "title": "Agent instructions (.opencode/agent/cyberbench.md)",
+                        "content": agent_md.read_text(encoding="utf-8"),
+                    }
+                )
+            if targets.is_file():
+                sections.append(
+                    {
+                        "id": "targets",
+                        "title": "Targets (TARGETS.md)",
+                        "content": targets.read_text(encoding="utf-8"),
+                    }
+                )
+            meta = self._benchmark_meta_from_run(run_dir)
+            return {
+                "version": 1,
+                "backend": str(meta.get("backend") or "opencode"),
+                "bundle_id": str(meta.get("bundle_id") or ""),
+                "level": meta.get("level"),
+                "manifest_path": "",
+                "source": "workspace",
+                "file_path": None,
+                "notice": (
+                    "Reconstructed from workspace files on disk (benchmark_static.json missing). "
+                    "CLI prompt and manifest path are omitted."
+                ),
+                "sections": sections,
+            }
+        meta = self._benchmark_meta_from_run(run_dir)
+        return {
+            "version": 1,
+            "bundle_id": str(meta.get("bundle_id") or ""),
+            "level": meta.get("level"),
+            "backend": meta.get("backend"),
+            "manifest_path": "",
+            "source": "missing",
+            "file_path": None,
+            "sections": [],
+            "notice": (
+                "No benchmark_static.json and no workspace/TARGETS.md found. "
+                "Re-run with an up-to-date cyberbench to emit benchmark_static.json."
+            ),
+        }
 
     def _build_index(self) -> dict[str, list[str]]:
         bundles: dict[str, list[str]] = {}
@@ -152,13 +308,25 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             try:
                 run_dir = self._safe_run_path(bundle_q, run_q)
                 transcript = self._read_transcript_lines(run_dir)
+                opencode = self._read_opencode_lines(run_dir)
+                transcript = self._merge_opencode_transcript(transcript, opencode)
                 result_obj = self._read_result(run_dir)
                 transcript_path = self._relative_repo(run_dir / "transcript.jsonl")
+                opencode_path = (
+                    self._relative_repo(run_dir / "opencode.stdout.jsonl")
+                    if (run_dir / "opencode.stdout.jsonl").is_file()
+                    else None
+                )
                 result_path = (
                     self._relative_repo(run_dir / "result.json")
                     if (run_dir / "result.json").is_file()
                     else None
                 )
+                static_path = run_dir / BENCHMARK_STATIC_JSON
+                benchmark_static_path = (
+                    self._relative_repo(static_path) if static_path.is_file() else None
+                )
+                benchmark_context = self._load_benchmark_context(run_dir)
                 self.send_json(
                     {
                         "bundle": bundle_q,
@@ -166,7 +334,10 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                         "transcript": transcript,
                         "result": result_obj,
                         "transcript_path": transcript_path,
+                        "opencode_path": opencode_path,
                         "result_path": result_path,
+                        "benchmark_static_path": benchmark_static_path,
+                        "benchmark_context": benchmark_context,
                     }
                 )
             except FileNotFoundError as e:
@@ -187,6 +358,151 @@ def _is_safe_path_segment(name: str) -> bool:
         if bad in name:
             return False
     return True
+
+
+def _normalize_opencode_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    step = 0
+    for event in events:
+        event_type = event.get("type")
+        part = event.get("part")
+        if not isinstance(part, dict):
+            continue
+        if event_type == "step_start":
+            step += 1
+            continue
+        if event_type == "text":
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                out.append(
+                    {
+                        "event": "assistant",
+                        "source": "opencode",
+                        "step": step,
+                        "message": {"role": "assistant", "content": text},
+                        "opencode_line": event.get("_opencode_line"),
+                    }
+                )
+            continue
+        if event_type == "tool_use":
+            tool_events = _normalize_opencode_tool_use(part, step, event.get("_opencode_line"))
+            out.extend(tool_events)
+            continue
+        if event_type == "step_finish":
+            out.append(
+                {
+                    "event": "opencode_step_finish",
+                    "source": "opencode",
+                    "step": step,
+                    "reason": part.get("reason"),
+                    "cost": part.get("cost"),
+                    "tokens": part.get("tokens"),
+                    "opencode_line": event.get("_opencode_line"),
+                }
+            )
+    return out
+
+
+def _normalize_opencode_tool_use(part: dict[str, object], step: int, line_no: object) -> list[dict[str, object]]:
+    state = part.get("state")
+    if not isinstance(state, dict):
+        state = {}
+    tool_input = state.get("input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    metadata = state.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    call_id = str(part.get("callID") or part.get("id") or f"opencode-{line_no}")
+    command = str(tool_input.get("command") or "")
+    tool_name = "submit_flag" if _is_submit_flag_command(command) else str(part.get("tool") or "tool")
+    arguments: dict[str, object]
+    if tool_name == "submit_flag":
+        arguments = {"flag": _extract_flag_from_command(command), "command": command}
+        result = _opencode_submit_result(str(state.get("output") or metadata.get("output") or ""))
+    else:
+        arguments = {"command": command, "description": tool_input.get("description")}
+        result = _opencode_shell_result(state, metadata)
+    assistant = {
+        "event": "assistant",
+        "source": "opencode",
+        "step": step,
+        "message": {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            ],
+        },
+        "opencode_line": line_no,
+    }
+    tool_result = {
+        "event": "tool_result",
+        "source": "opencode",
+        "step": step,
+        "tool_call_id": call_id,
+        "result": result,
+        "opencode_line": line_no,
+    }
+    return [assistant, tool_result]
+
+
+def _opencode_shell_result(state: dict[object, object], metadata: dict[object, object]) -> dict[str, object]:
+    output = str(state.get("output") or metadata.get("output") or "")
+    exit_code_raw = metadata.get("exit")
+    try:
+        exit_code = int(exit_code_raw) if exit_code_raw is not None else None
+    except (TypeError, ValueError):
+        exit_code = None
+    status = state.get("status")
+    return {
+        "ok": status == "completed" and exit_code in (None, 0),
+        "exit_code": exit_code,
+        "stdout": output,
+        "stderr": "",
+        "timed_out": status == "timed_out",
+        "elapsed_seconds": _opencode_elapsed_seconds(state),
+    }
+
+
+def _opencode_elapsed_seconds(state: dict[object, object]) -> float | None:
+    time_data = state.get("time")
+    if not isinstance(time_data, dict):
+        return None
+    start = time_data.get("start")
+    end = time_data.get("end")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end >= start:
+        return (end - start) / 1000
+    return None
+
+
+def _is_submit_flag_command(command: str) -> bool:
+    return bool("submit_flag" in command.split()) or "./submit_flag" in command
+
+
+def _extract_flag_from_command(command: str) -> str:
+    for prefix in ("CYBERBENCH{", "CTF{"):
+        start = command.find(prefix)
+        if start >= 0:
+            end = command.find("}", start)
+            if end >= 0:
+                return command[start : end + 1]
+    return ""
+
+
+def _opencode_submit_result(output: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError:
+        parsed = {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
 
 
 def _make_handler_class(
