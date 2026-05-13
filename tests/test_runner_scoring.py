@@ -40,6 +40,24 @@ class RunnerScoringTests(unittest.TestCase):
         self.assertFalse(result["correct"])
         self.assertEqual(runner.state.solved_service_ids, set())
 
+    def test_initial_messages_include_selected_level_hint(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(manifest, "levels", {1: "Try the game API first."})
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = AgentRunner(
+                manifest=manifest,
+                runtime=object(),
+                client=object(),
+                model="test-model",
+                run_dir=Path(tmp),
+                level=1,
+            )
+
+            messages = runner._initial_messages()
+
+        self.assertIn("Selected hint level 1", messages[1]["content"])
+        self.assertIn("Try the game API first.", messages[1]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

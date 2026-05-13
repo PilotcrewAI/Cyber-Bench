@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+from cyberbench.benchmark_static import build_opencode_static, write_benchmark_static
 from cyberbench.manifest import BundleManifest
 from cyberbench.runtime.docker import DockerRuntime
 
@@ -32,6 +33,7 @@ class OpenCodeRunner:
         run_dir: Path,
         openrouter_api_key: str,
         opencode_bin: str = "opencode",
+        level: int | None = None,
     ) -> None:
         self.manifest = manifest
         self.runtime = runtime
@@ -40,6 +42,7 @@ class OpenCodeRunner:
         self.workspace = run_dir / "workspace"
         self.openrouter_api_key = openrouter_api_key
         self.opencode_bin = opencode_bin
+        self.level = level
         self.state = OpenCodeRunState()
         self.transcript_path = run_dir / "transcript.jsonl"
 
@@ -54,7 +57,13 @@ class OpenCodeRunner:
         started = time.monotonic()
         self._prepare_workspace()
         self._record(
-            {"event": "start", "backend": "opencode", "model": self.model, "bundle_id": self.manifest.bundle_id}
+            {
+                "event": "start",
+                "backend": "opencode",
+                "model": self.model,
+                "bundle_id": self.manifest.bundle_id,
+                "level": self.level,
+            }
         )
         with _ScoringServer(self.manifest, self.state, self._record) as scoring:
             self._write_submit_flag([scoring.host_url, scoring.container_url])
@@ -140,6 +149,7 @@ class OpenCodeRunner:
         (opencode_dir / "cyberbench.md").write_text(self._agent_config())
         self._write_bench_shell()
         (self.workspace / "TARGETS.md").write_text(self._targets_doc())
+        self._write_benchmark_static_snapshot()
 
     def _write_bench_shell(self) -> None:
         script = f"""#!/bin/sh
@@ -246,7 +256,34 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
                 -2,
                 f"- `./bench_shell 'curl -i http://{self.manifest.target_host}:{self.manifest.target_ports[0].port}/'`",
             )
+        hint = self._level_hint()
+        if hint:
+            lines.extend(
+                [
+                    "",
+                    f"## Selected Hint Level {self.level}",
+                    "",
+                    hint,
+                ]
+            )
         return "\n".join(lines)
+
+    def _write_benchmark_static_snapshot(self) -> None:
+        write_benchmark_static(
+            self.run_dir,
+            build_opencode_static(
+                bundle_id=self.manifest.bundle_id,
+                level=self.level,
+                manifest_path=self.manifest.path,
+                workspace=self.workspace,
+                cli_prompt=self._prompt(),
+            ),
+        )
+
+    def _level_hint(self) -> str | None:
+        if self.level is None:
+            return None
+        return self.manifest.levels.get(self.level)
 
     def _result(self, elapsed_seconds: float, completed: dict[str, Any]) -> dict[str, Any]:
         scored_ids = {service.id for service in self.manifest.scored_services}

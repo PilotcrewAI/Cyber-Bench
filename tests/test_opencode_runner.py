@@ -37,6 +37,24 @@ class OpenCodeRunnerTests(unittest.TestCase):
         self.assertNotIn("decoy", doc)
         self.assertNotIn("expected_flags", doc)
 
+    def test_targets_doc_includes_selected_level_hint(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(manifest, "levels", {2: "Inspect the JSON API routes."})
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = OpenCodeRunner(
+                manifest=manifest,
+                runtime=DummyRuntime(),
+                model="test/model",
+                run_dir=Path(tmp),
+                openrouter_api_key="test-key",
+                level=2,
+            )
+
+            doc = runner._targets_doc()
+
+        self.assertIn("Selected Hint Level 2", doc)
+        self.assertIn("Inspect the JSON API routes.", doc)
+
     def test_summarize_opencode_usage_reads_step_finish_events(self) -> None:
         stdout = "\n".join(
             [

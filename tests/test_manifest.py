@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import tempfile
 import unittest
 
 from cyberbench.manifest import load_manifest, validate_manifest
@@ -27,6 +29,17 @@ class ManifestTests(unittest.TestCase):
         for service in manifest.scored_services:
             self.assertIsNotNone(service.build_context)
             self.assertTrue(service.image.startswith("cyberbench/google-web-10:"))
+
+    def test_manifest_loads_hint_levels(self) -> None:
+        data = json.loads(Path("bundles/smoke-web/manifest.json").read_text())
+        data["levels"] = {"1": "first hint", "3": "third hint"}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "manifest.json"
+            path.write_text(json.dumps(data))
+
+            manifest = load_manifest(path)
+
+        self.assertEqual(manifest.levels, {1: "first hint", 3: "third hint"})
 
 
 if __name__ == "__main__":

@@ -249,6 +249,9 @@
       <button type="button" class="tab" role="tab" id="tab-result" aria-selected="false" aria-controls="panel-result">
         Run summary · result.json
       </button>
+      <button type="button" class="tab" role="tab" id="tab-context" aria-selected="false" aria-controls="panel-context">
+        Benchmark context
+      </button>
     </div>
     <div id="panel-transcript" role="tabpanel" aria-labelledby="tab-transcript">
       <p class="muted" style="margin: 0 0 16px; color: var(--muted); font-size: 0.82rem;">
@@ -269,6 +272,21 @@
         </h2>
         <div class="path-line" id="run-paths"></div>
         <div id="result-body"></div>
+      </section>
+    </div>
+    <div id="panel-context" role="tabpanel" aria-labelledby="tab-context" hidden>
+      <p class="muted" style="margin: 0 0 16px; color: var(--muted); font-size: 0.82rem;">
+        Frozen instructions and target docs for this run (system prompt, <span class="mono">TARGETS.md</span>,
+        OpenCode agent config, tool schemas). New runs write <span class="mono">benchmark_static.json</span>;
+        older OpenCode runs may be reconstructed from <span class="mono">workspace/</span> only.
+      </p>
+      <section id="context-panel" class="panel">
+        <h2 style="margin-top: 0;">
+          <span class="badge start">Benchmark context</span>
+          <span id="context-run-title" style="font-size: 0.9rem; color: var(--text); font-weight: 500;"></span>
+        </h2>
+        <div class="path-line" id="context-paths"></div>
+        <div id="context-body"></div>
       </section>
     </div>
   </main>
@@ -294,16 +312,22 @@
   const runTitleEl = document.getElementById("run-title");
   const tabTranscript = document.getElementById("tab-transcript");
   const tabResult = document.getElementById("tab-result");
+  const tabContext = document.getElementById("tab-context");
   const panelTranscript = document.getElementById("panel-transcript");
   const panelResult = document.getElementById("panel-result");
+  const panelContext = document.getElementById("panel-context");
+  const contextBody = document.getElementById("context-body");
+  const contextPathsEl = document.getElementById("context-paths");
+  const contextRunTitleEl = document.getElementById("context-run-title");
 
-  /** @param {"transcript" | "result"} id */
+  /** @param {"transcript" | "result" | "context"} id */
   function setActiveTab(id) {
-    const showResult = id === "result";
-    tabTranscript.setAttribute("aria-selected", String(!showResult));
-    tabResult.setAttribute("aria-selected", String(showResult));
-    panelTranscript.hidden = showResult;
-    panelResult.hidden = !showResult;
+    tabTranscript.setAttribute("aria-selected", String(id === "transcript"));
+    tabResult.setAttribute("aria-selected", String(id === "result"));
+    tabContext.setAttribute("aria-selected", String(id === "context"));
+    panelTranscript.hidden = id !== "transcript";
+    panelResult.hidden = id !== "result";
+    panelContext.hidden = id !== "context";
   }
 
   /** @type {TranscriptRecord[]} */
@@ -520,6 +544,136 @@
     runTitleEl.textContent = "";
   }
 
+  function hideContextPanel() {
+    contextBody.innerHTML = "";
+    contextPathsEl.textContent = "";
+    contextRunTitleEl.textContent = "";
+  }
+
+  /**
+   * @param {unknown} ctx
+   * @param {string | null} staticPath
+   * @param {string} transcriptPath
+   * @param {string} bundle
+   * @param {string} run
+   */
+  function renderBenchmarkContext(ctx, staticPath, transcriptPath, bundle, run) {
+    contextRunTitleEl.textContent = `${bundle} / ${run}`;
+    const parts = [transcriptPath];
+    if (staticPath) {
+      parts.push(staticPath);
+    }
+    contextPathsEl.textContent = parts.join(" • ");
+
+    contextBody.innerHTML = "";
+
+    if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) {
+      const p = document.createElement("p");
+      p.className = "warn-text";
+      p.textContent = "No benchmark context in API response.";
+      contextBody.appendChild(p);
+      return;
+    }
+
+    /** @type {Record<string, unknown>} */
+    const c = /** @type {Record<string, unknown>} */ (ctx);
+    const notice = c.notice;
+    if (typeof notice === "string" && notice.length > 0) {
+      const p = document.createElement("p");
+      p.className = "warn-text";
+      p.style.marginBottom = "12px";
+      p.textContent = notice;
+      contextBody.appendChild(p);
+    }
+
+    const metaDl = document.createElement("dl");
+    metaDl.style.fontSize = "0.88rem";
+    metaDl.style.marginBottom = "16px";
+
+    const sectionList = Array.isArray(c.sections) ? c.sections : [];
+    const hasManifestSection = sectionList.some((sec) => {
+      if (!sec || typeof sec !== "object" || Array.isArray(sec)) {
+        return false;
+      }
+      return /** @type {Record<string, unknown>} */ (sec).id === "manifest";
+    });
+
+    /** @param {string} label @param {unknown} val */
+    function metaRow(label, val) {
+      if (val === undefined || val === null || val === "") {
+        return;
+      }
+      const dt = document.createElement("dt");
+      dt.style.color = "var(--muted)";
+      dt.style.marginTop = "6px";
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.style.margin = "2px 0 0";
+      dd.textContent = typeof val === "object" ? stringifyPretty(val) : String(val);
+      metaDl.appendChild(dt);
+      metaDl.appendChild(dd);
+    }
+
+    metaRow("Source", c.source);
+    metaRow("Snapshot file", c.file_path);
+    metaRow("Backend", c.backend);
+    metaRow("bundle_id", c.bundle_id);
+    metaRow("level", c.level);
+    if (!hasManifestSection) {
+      metaRow("manifest_path", c.manifest_path);
+    }
+    if (metaDl.children.length > 0) {
+      contextBody.appendChild(metaDl);
+    }
+
+    if (sectionList.length === 0) {
+      const p = document.createElement("p");
+      p.style.color = "var(--muted)";
+      p.textContent = "No sections available.";
+      contextBody.appendChild(p);
+    } else {
+      for (let i = 0; i < sectionList.length; i++) {
+        const sec = sectionList[i];
+        if (!sec || typeof sec !== "object" || Array.isArray(sec)) {
+          continue;
+        }
+        /** @type {Record<string, unknown>} */
+        const s = /** @type {Record<string, unknown>} */ (sec);
+        const title = typeof s.title === "string" ? s.title : `Section ${i + 1}`;
+        const body =
+          typeof s.content === "string"
+            ? s.content
+            : stringifyPretty(s.content);
+
+        const block = document.createElement("div");
+        block.className = "block";
+        block.style.marginBottom = "14px";
+        const h3 = document.createElement("h3");
+        h3.textContent = title;
+        block.appendChild(h3);
+        const pre = document.createElement("pre");
+        pre.className = "mono";
+        setPreText(pre, body);
+        block.appendChild(pre);
+        contextBody.appendChild(block);
+      }
+    }
+
+    const raw = document.createElement("details");
+    raw.style.marginTop = "12px";
+    const sum = document.createElement("summary");
+    sum.style.cursor = "pointer";
+    sum.style.color = "var(--muted)";
+    sum.style.fontSize = "0.8rem";
+    sum.textContent = "Raw benchmark_context JSON";
+    raw.appendChild(sum);
+    const pre = document.createElement("pre");
+    pre.className = "mono";
+    setPreText(pre, stringifyPretty(ctx));
+    raw.appendChild(pre);
+    contextBody.appendChild(raw);
+  }
+
   /** @param {TranscriptRecord[]} recs */
   function loadEntries(recs) {
     try {
@@ -569,6 +723,7 @@
     const run = runSelect.value;
     if (!bundle || !run) {
       hideResultPanel();
+      hideContextPanel();
       entries = [];
       slices = [];
       sliceIdx = 0;
@@ -586,6 +741,7 @@
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       hideResultPanel();
+      hideContextPanel();
       return;
     }
     let data;
@@ -594,6 +750,7 @@
     } catch {
       setError("Invalid JSON from /api/run");
       hideResultPanel();
+      hideContextPanel();
       return;
     }
     if (!resp.ok) {
@@ -606,12 +763,14 @@
       viewEl.innerHTML = "";
       placeholder.style.display = "block";
       hideResultPanel();
+      hideContextPanel();
       return;
     }
     const tr = data.transcript;
     if (!Array.isArray(tr)) {
       setError("Response missing transcript array");
       hideResultPanel();
+      hideContextPanel();
       return;
     }
     /** @type {TranscriptRecord[]} */
@@ -621,6 +780,7 @@
       if (!row || typeof row !== "object" || Array.isArray(row)) {
         setError(`transcript[${i}] is not an object`);
         hideResultPanel();
+        hideContextPanel();
         return;
       }
       recs.push(/** @type {TranscriptRecord} */ (row));
@@ -631,6 +791,13 @@
       data.result_path != null ? String(data.result_path) : null,
       data.transcript_path != null ? String(data.transcript_path) : "",
       data.opencode_path != null ? String(data.opencode_path) : null,
+      bundle,
+      run,
+    );
+    renderBenchmarkContext(
+      data.benchmark_context,
+      data.benchmark_static_path != null ? String(data.benchmark_static_path) : null,
+      data.transcript_path != null ? String(data.transcript_path) : "",
       bundle,
       run,
     );
@@ -658,6 +825,7 @@
         setError("No runs found: add runs/<bundle>/<id>/transcript.jsonl or pass --runs-dir.");
         reloadRunBtn.disabled = true;
         hideResultPanel();
+        hideContextPanel();
         setActiveTab("transcript");
         return;
       }
@@ -674,6 +842,7 @@
       setError(e instanceof Error ? e.message : String(e));
       reloadRunBtn.disabled = true;
       hideResultPanel();
+      hideContextPanel();
       setActiveTab("transcript");
     }
   }
@@ -1162,6 +1331,7 @@
 
   tabTranscript.addEventListener("click", () => setActiveTab("transcript"));
   tabResult.addEventListener("click", () => setActiveTab("result"));
+  tabContext.addEventListener("click", () => setActiveTab("context"));
 
   document.addEventListener("keydown", (ev) => {
     if (

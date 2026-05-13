@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 VIEWER_ROOT: Final = Path(__file__).resolve().parent
 DEFAULT_REPO_ROOT: Final = VIEWER_ROOT.parent
+BENCHMARK_STATIC_JSON: Final = "benchmark_static.json"
 
 
 class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
@@ -134,6 +135,124 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("result.json: root must be an object")
         return data
 
+    def _first_transcript_start(self, run_dir: Path) -> dict[str, object] | None:
+        tpath = run_dir / "transcript.jsonl"
+        if not tpath.is_file():
+            return None
+        for line in tpath.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and obj.get("event") == "start":
+                return obj
+        return None
+
+    def _benchmark_meta_from_run(self, run_dir: Path) -> dict[str, object]:
+        bundle_id = ""
+        level: int | None = None
+        backend: str | None = None
+        rpath = run_dir / "result.json"
+        if rpath.is_file():
+            try:
+                parsed = json.loads(rpath.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                bundle_id = str(parsed.get("bundle_id") or "")
+                br = parsed.get("backend")
+                backend = str(br) if isinstance(br, str) and br else backend
+        start_ev = self._first_transcript_start(run_dir)
+        if isinstance(start_ev, dict):
+            if not bundle_id:
+                bundle_id = str(start_ev.get("bundle_id") or "")
+            lv = start_ev.get("level")
+            if lv is not None:
+                try:
+                    level = int(lv)
+                except (TypeError, ValueError):
+                    level = None
+            if not backend:
+                sb = start_ev.get("backend")
+                if isinstance(sb, str) and sb:
+                    backend = sb
+        return {"bundle_id": bundle_id, "level": level, "backend": backend, "manifest_path": ""}
+
+    def _load_benchmark_context(self, run_dir: Path) -> dict[str, object]:
+        snap = run_dir / BENCHMARK_STATIC_JSON
+        if snap.is_file():
+            try:
+                raw = json.loads(snap.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                return {
+                    "source": "invalid_snapshot",
+                    "file_path": self._relative_repo(snap),
+                    "notice": f"benchmark_static.json is not valid JSON ({exc}).",
+                    "sections": [],
+                    **self._benchmark_meta_from_run(run_dir),
+                }
+            if isinstance(raw, dict):
+                sections = raw.get("sections")
+                if isinstance(sections, list):
+                    out = {**raw}
+                    out["source"] = "snapshot"
+                    out["file_path"] = self._relative_repo(snap)
+                    return out
+        workspace = run_dir / "workspace"
+        targets = workspace / "TARGETS.md"
+        agent_md = workspace / ".opencode" / "agent" / "cyberbench.md"
+        if targets.is_file() or agent_md.is_file():
+            sections: list[dict[str, object]] = []
+            if agent_md.is_file():
+                sections.append(
+                    {
+                        "id": "agent_config",
+                        "title": "Agent instructions (.opencode/agent/cyberbench.md)",
+                        "content": agent_md.read_text(encoding="utf-8"),
+                    }
+                )
+            if targets.is_file():
+                sections.append(
+                    {
+                        "id": "targets",
+                        "title": "Targets (TARGETS.md)",
+                        "content": targets.read_text(encoding="utf-8"),
+                    }
+                )
+            meta = self._benchmark_meta_from_run(run_dir)
+            return {
+                "version": 1,
+                "backend": str(meta.get("backend") or "opencode"),
+                "bundle_id": str(meta.get("bundle_id") or ""),
+                "level": meta.get("level"),
+                "manifest_path": "",
+                "source": "workspace",
+                "file_path": None,
+                "notice": (
+                    "Reconstructed from workspace files on disk (benchmark_static.json missing). "
+                    "CLI prompt and manifest path are omitted."
+                ),
+                "sections": sections,
+            }
+        meta = self._benchmark_meta_from_run(run_dir)
+        return {
+            "version": 1,
+            "bundle_id": str(meta.get("bundle_id") or ""),
+            "level": meta.get("level"),
+            "backend": meta.get("backend"),
+            "manifest_path": "",
+            "source": "missing",
+            "file_path": None,
+            "sections": [],
+            "notice": (
+                "No benchmark_static.json and no workspace/TARGETS.md found. "
+                "Re-run with an up-to-date cyberbench to emit benchmark_static.json."
+            ),
+        }
+
     def _build_index(self) -> dict[str, list[str]]:
         bundles: dict[str, list[str]] = {}
         root = self.runs_root
@@ -203,6 +322,11 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                     if (run_dir / "result.json").is_file()
                     else None
                 )
+                static_path = run_dir / BENCHMARK_STATIC_JSON
+                benchmark_static_path = (
+                    self._relative_repo(static_path) if static_path.is_file() else None
+                )
+                benchmark_context = self._load_benchmark_context(run_dir)
                 self.send_json(
                     {
                         "bundle": bundle_q,
@@ -212,6 +336,8 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                         "transcript_path": transcript_path,
                         "opencode_path": opencode_path,
                         "result_path": result_path,
+                        "benchmark_static_path": benchmark_static_path,
+                        "benchmark_context": benchmark_context,
                     }
                 )
             except FileNotFoundError as e:

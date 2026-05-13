@@ -50,6 +50,7 @@ class BundleManifest:
     target_ports: tuple[TargetPort, ...]
     services: tuple[ServiceConfig, ...]
     budgets: BudgetConfig
+    levels: dict[int, str] = field(default_factory=dict)
     smoke: bool = False
 
     @property
@@ -66,6 +67,7 @@ def load_manifest(path: Path) -> BundleManifest:
     services = tuple(_service(item) for item in data["services"])
     target = data["target"]
     budgets = data.get("budgets", {})
+    levels = data.get("levels", {})
     return BundleManifest(
         path=path,
         schema_version=int(data["schema_version"]),
@@ -81,6 +83,7 @@ def load_manifest(path: Path) -> BundleManifest:
             max_total_tokens=_optional_int(budgets.get("max_total_tokens")),
             max_cost_usd=_optional_float(budgets.get("max_cost_usd")),
         ),
+        levels={int(level): str(hint) for level, hint in levels.items()},
         smoke=bool(data.get("smoke", False)),
     )
 
@@ -110,6 +113,11 @@ def validate_manifest(manifest: BundleManifest, *, strict: bool = False) -> list
             mount = manifest.path.parent / service.mount
             if not mount.exists():
                 errors.append(f"service {service.id!r} mount does not exist: {service.mount}")
+    for level, hint in manifest.levels.items():
+        if level < 1:
+            errors.append(f"level {level!r} must be a positive integer")
+        if not hint.strip():
+            errors.append(f"level {level!r} must define a non-empty hint")
     if strict and not manifest.smoke and len(manifest.scored_services) != 10:
         errors.append("strict v1 bundles must contain exactly 10 scored CTF services")
     return errors
