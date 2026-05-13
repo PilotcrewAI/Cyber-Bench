@@ -262,7 +262,9 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             if not bundle_dir.is_dir():
                 continue
             run_names: list[str] = []
-            for run_dir in sorted(bundle_dir.iterdir(), key=lambda p: p.name):
+            for run_dir in sorted(
+                bundle_dir.iterdir(), key=lambda p: p.name, reverse=True
+            ):
                 if run_dir.is_dir() and (run_dir / "transcript.jsonl").is_file():
                     run_names.append(run_dir.name)
             if run_names:

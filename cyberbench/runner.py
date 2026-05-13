@@ -70,7 +70,6 @@ class AgentRunner:
                 model=self.model,
                 messages=messages,
                 tools=TOOLS,
-                max_tokens=1200,
                 temperature=0.2,
             )
             usage = response_usage(response)

@@ -107,7 +107,6 @@ def _check_openrouter(cli_model: str | None) -> int:
             {"role": "system", "content": "Reply with exactly: OK"},
             {"role": "user", "content": "Connectivity check."},
         ],
-        max_tokens=64,
         temperature=0,
     )
     message = first_message(response)

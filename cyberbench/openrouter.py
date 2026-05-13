@@ -47,14 +47,13 @@ class OpenRouterClient:
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        max_tokens: int = 1024,
         temperature: float = 0.2,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
             "temperature": temperature,
+            "reasoning": {"effort": "high"},
         }
         if tools:
             payload["tools"] = tools
