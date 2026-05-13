@@ -14,6 +14,7 @@ from cyberbench.config import (
 )
 from cyberbench.manifest import load_manifest, validate_manifest
 from cyberbench.openrouter import OpenRouterClient, first_message
+from cyberbench.opencode_runner import OpenCodeRunner
 from cyberbench.runner import AgentRunner
 from cyberbench.runtime.docker import DEFAULT_ATTACKER_IMAGE, DockerRuntime
 
@@ -49,6 +50,17 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--attacker-image", default=DEFAULT_ATTACKER_IMAGE)
     run.add_argument("--keep-containers", action="store_true")
 
+    run_opencode = subparsers.add_parser("run-opencode")
+    run_opencode.add_argument("manifest", type=Path)
+    run_opencode.add_argument(
+        "--model",
+        default=None,
+        help="OpenRouter model id (overrides CYBERBENCH_MODEL; default otherwise).",
+    )
+    run_opencode.add_argument("--attacker-image", default=DEFAULT_ATTACKER_IMAGE)
+    run_opencode.add_argument("--opencode-bin", default="opencode")
+    run_opencode.add_argument("--keep-containers", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "validate-config":
         return _validate_config()
@@ -60,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         return _prepare_run(args.manifest)
     if args.command == "run":
         return _run(args)
+    if args.command == "run-opencode":
+        return _run_opencode(args)
     raise AssertionError(args.command)
 
 
@@ -156,6 +170,49 @@ def _run(args: argparse.Namespace) -> int:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in {"solved", "budget_exhausted", "timeout", "agent_gave_up"} else 1
+
+
+def _run_opencode(args: argparse.Namespace) -> int:
+    api_key = require_openrouter_key()
+    manifest = load_manifest(args.manifest)
+    errors = validate_manifest(manifest)
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+    model = resolve_model(args.model)
+    ts = local_timestamp_slug()
+    bundle_dir = Path("runs") / path_slug(manifest.bundle_id)
+    run_dir = bundle_dir / f"{ts}_opencode_{path_slug(model)}"
+    workspace = run_dir / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime = DockerRuntime(
+        manifest,
+        run_dir,
+        attacker_image=args.attacker_image,
+        attacker_workspace=workspace,
+    )
+    runner = OpenCodeRunner(
+        manifest=manifest,
+        runtime=runtime,
+        model=model,
+        run_dir=run_dir,
+        openrouter_api_key=api_key,
+        opencode_bin=args.opencode_bin,
+    )
+    try:
+        runner.check_prerequisites()
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        runtime.up()
+        result = runner.run()
+    finally:
+        if not args.keep_containers:
+            runtime.down()
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["status"] in {"solved", "agent_stopped", "timeout"} else 1
 
 
 if __name__ == "__main__":

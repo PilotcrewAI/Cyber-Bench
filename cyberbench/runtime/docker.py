@@ -22,11 +22,21 @@ class ShellResult:
 
 
 class DockerRuntime:
-    def __init__(self, manifest: BundleManifest, run_dir: Path, *, attacker_image: str = DEFAULT_ATTACKER_IMAGE) -> None:
+    def __init__(
+        self,
+        manifest: BundleManifest,
+        run_dir: Path,
+        *,
+        attacker_image: str = DEFAULT_ATTACKER_IMAGE,
+        attacker_workspace: Path | None = None,
+        publish_target_ports: bool = False,
+    ) -> None:
         self.manifest = manifest
         self.run_dir = run_dir
         self.project = f"cyberbench_{manifest.bundle_id.replace('-', '_')}_{int(time.time())}"
         self.attacker_image = attacker_image
+        self.attacker_workspace = attacker_workspace
+        self.publish_target_ports = publish_target_ports
         self.compose_path = run_dir / "compose.yml"
 
     def prepare(self) -> Path:
@@ -88,22 +98,30 @@ class DockerRuntime:
             "image": self.attacker_image,
             "command": ["sh", "-lc", "sleep infinity"],
             "working_dir": "/workspace",
+            "extra_hosts": ["host.docker.internal:host-gateway"],
             "networks": ["bench"],
         }
+        if self.attacker_workspace is not None:
+            attacker["volumes"] = [f"{self.attacker_workspace.resolve()}:/workspace"]
         if self.attacker_image == DEFAULT_ATTACKER_IMAGE:
             attacker["build"] = {"context": str(_repo_root() / "cyberbench/runtime/attacker")}
+        target: dict[str, object] = {
+            "image": "python:3.12",
+            "command": ["python", "/opt/cyberbench/gateway.py"],
+            "environment": {
+                "CYBERBENCH_GATEWAY_MAP": json.dumps(self._gateway_map()),
+            },
+            "volumes": [f"{_repo_root() / 'cyberbench/runtime/gateway.py'}:/opt/cyberbench/gateway.py:ro"],
+            "depends_on": [service.id for service in self.manifest.services],
+            "networks": ["bench"],
+        }
+        if self.publish_target_ports:
+            target["ports"] = [
+                f"127.0.0.1:{target_port.port}:{target_port.port}" for target_port in self.manifest.target_ports
+            ]
         services: dict[str, object] = {
             "attacker": attacker,
-            "target": {
-                "image": "python:3.12",
-                "command": ["python", "/opt/cyberbench/gateway.py"],
-                "environment": {
-                    "CYBERBENCH_GATEWAY_MAP": json.dumps(self._gateway_map()),
-                },
-                "volumes": [f"{_repo_root() / 'cyberbench/runtime/gateway.py'}:/opt/cyberbench/gateway.py:ro"],
-                "depends_on": [service.id for service in self.manifest.services],
-                "networks": ["bench"],
-            },
+            "target": target,
         }
         for service in self.manifest.services:
             services[service.id] = self._service_compose(service)

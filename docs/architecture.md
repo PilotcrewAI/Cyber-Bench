@@ -91,6 +91,95 @@ sequenceDiagram
     R-->>M: scoring vs manifest only
 ```
 
+## OpenCode backend (`run-opencode`)
+
+`python -m cyberbench.cli run-opencode` keeps the **same Docker topology**
+(attacker, gateway `target`, challenge containers on `bench`) as `run`, but
+replaces the in-process `AgentRunner` + model API loop with the **OpenCode
+CLI** running on the **host**.
+
+- **Per-run workspace** — The CLI creates `runs/.../workspace` and passes it to
+  `DockerRuntime` as `attacker_workspace`, so Compose **bind-mounts** that
+  directory to **`/workspace` in the attacker container**. Challenge source
+  trees are not copied there; only helper files and OpenCode config.
+- **OpenCode process** — `OpenCodeRunner` runs
+  `opencode run --dir <workspace> --agent cyberbench --model openrouter/<id> ...`
+  via `subprocess`, with `OPENROUTER_API_KEY` set. Agent instructions live in
+  `.opencode/agent/cyberbench.md`; the user prompt includes `TARGETS.md`
+  (gateway URLs like `http://target:<port>/`).
+- **`./bench_shell`** — A host-executable script in the workspace that runs
+  `docker compose -f <run_dir>/compose.yml -p <project> exec -T attacker sh -lc "..."`.
+  When OpenCode runs shell commands, **recon still executes inside the
+  attacker container** (same as the API runner’s shell tool), including
+  `curl http://target:...`.
+- **`./submit_flag`** — A small Python helper that `POST`s `{"flag": "..."}` to
+  a local **scoring HTTP server** on the host (`ThreadingHTTPServer` on
+  `127.0.0.1`, ephemeral port). The script tries
+  `http://127.0.0.1:.../submit` first (when OpenCode runs it on the host),
+  then `http://host.docker.internal:.../submit` (from inside the attacker,
+  via `extra_hosts: host.docker.internal:host-gateway` on the attacker
+  service). Scoring checks flags only against `manifest.scored_services` /
+  `expected_flags` (no round trip to challenge containers).
+
+### Diagram: OpenCode control flow
+
+```mermaid
+flowchart LR
+    subgraph Host["Host machine"]
+        CLI["cli run-opencode"]
+        OC["OpenCode CLI\n(opencode run)"]
+        WS["Run workspace\n(bench_shell, submit_flag,\n.opencode/, TARGETS.md)"]
+        SCR["ScoringServer\nHTTP POST /submit"]
+        subgraph Docker["Docker (compose)"]
+            ATK["attacker\n/workspace = WS mount"]
+            GW["target gateway"]
+            CH["Challenges + decoys"]
+        end
+    end
+
+    CLI -->|"up / down"| Docker
+    CLI --> OC
+    OC <-->|"cwd = workspace"| WS
+    OC -->|"subprocess: ./bench_shell 'cmd'"| WS
+    WS -->|"docker compose exec attacker"| ATK
+    ATK -->|"curl http://target:port"| GW
+    GW --> CH
+    OC -->|"./submit_flag 'FLAG'"| WS
+    WS -->|POST JSON| SCR
+    SCR -->|"compare to manifest"| SCR
+```
+
+### Diagram: `bench_shell` and `submit_flag`
+
+```mermaid
+sequenceDiagram
+    participant OC as OpenCode (host)
+    participant BS as bench_shell (host)
+    participant DC as docker compose
+    participant A as attacker container
+    participant T as target gateway
+    participant SF as submit_flag script
+    participant S as ScoringServer (host)
+
+    OC->>BS: run probe command
+    BS->>DC: exec -T attacker sh -lc ...
+    DC->>A: command runs
+    A->>T: HTTP e.g. curl http://target:8101
+    T-->>A: response
+    A-->>DC: stdout/stderr
+    DC-->>BS: captured output
+    BS-->>OC: exit + output
+
+    OC->>SF: ./submit_flag "candidate"
+    alt running on host
+        SF->>S: POST http://127.0.0.1:.../submit
+    else running inside attacker (same mount)
+        SF->>S: POST http://host.docker.internal:.../submit
+    end
+    S-->>SF: JSON correct / incorrect
+    SF-->>OC: printed result
+```
+
 ## Key files
 
 | Area | Location |
@@ -98,5 +187,6 @@ sequenceDiagram
 | Compose generation | `cyberbench/runtime/docker.py` |
 | TCP forwarding | `cyberbench/runtime/gateway.py` |
 | Agent loop & tools | `cyberbench/runner.py` |
+| OpenCode runner | `cyberbench/opencode_runner.py`, CLI `run-opencode` in `cyberbench/cli.py` |
 | CLI orchestration | `cyberbench/cli.py` |
 | Bundle schema & ports | `cyberbench/manifest.py`, bundle `manifest.json` |

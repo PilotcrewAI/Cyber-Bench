@@ -85,6 +85,43 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             out.append(obj)
         return out
 
+    def _read_opencode_lines(self, run_dir: Path) -> list[dict[str, object]]:
+        opath = run_dir / "opencode.stdout.jsonl"
+        if not opath.is_file():
+            return []
+        lines = opath.read_text(encoding="utf-8").splitlines()
+        out: list[dict[str, object]] = []
+        for i, line in enumerate(lines, start=1):
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"opencode.stdout.jsonl: invalid JSON on line {i}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(f"opencode.stdout.jsonl: line {i} is not a JSON object")
+            obj["_opencode_line"] = i
+            out.append(obj)
+        return out
+
+    def _merge_opencode_transcript(
+        self,
+        transcript: list[dict[str, object]],
+        opencode: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if not opencode:
+            return transcript
+        normalized = _normalize_opencode_events(opencode)
+        prefix: list[dict[str, object]] = []
+        suffix: list[dict[str, object]] = []
+        for event in transcript:
+            if event.get("event") in {"opencode_finish", "finish"}:
+                suffix.append(event)
+            else:
+                prefix.append(event)
+        return prefix + normalized + suffix
+
     def _read_result(self, run_dir: Path) -> dict[str, object] | None:
         rpath = run_dir / "result.json"
         if not rpath.is_file():
@@ -152,8 +189,15 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             try:
                 run_dir = self._safe_run_path(bundle_q, run_q)
                 transcript = self._read_transcript_lines(run_dir)
+                opencode = self._read_opencode_lines(run_dir)
+                transcript = self._merge_opencode_transcript(transcript, opencode)
                 result_obj = self._read_result(run_dir)
                 transcript_path = self._relative_repo(run_dir / "transcript.jsonl")
+                opencode_path = (
+                    self._relative_repo(run_dir / "opencode.stdout.jsonl")
+                    if (run_dir / "opencode.stdout.jsonl").is_file()
+                    else None
+                )
                 result_path = (
                     self._relative_repo(run_dir / "result.json")
                     if (run_dir / "result.json").is_file()
@@ -166,6 +210,7 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                         "transcript": transcript,
                         "result": result_obj,
                         "transcript_path": transcript_path,
+                        "opencode_path": opencode_path,
                         "result_path": result_path,
                     }
                 )
@@ -187,6 +232,151 @@ def _is_safe_path_segment(name: str) -> bool:
         if bad in name:
             return False
     return True
+
+
+def _normalize_opencode_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    step = 0
+    for event in events:
+        event_type = event.get("type")
+        part = event.get("part")
+        if not isinstance(part, dict):
+            continue
+        if event_type == "step_start":
+            step += 1
+            continue
+        if event_type == "text":
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                out.append(
+                    {
+                        "event": "assistant",
+                        "source": "opencode",
+                        "step": step,
+                        "message": {"role": "assistant", "content": text},
+                        "opencode_line": event.get("_opencode_line"),
+                    }
+                )
+            continue
+        if event_type == "tool_use":
+            tool_events = _normalize_opencode_tool_use(part, step, event.get("_opencode_line"))
+            out.extend(tool_events)
+            continue
+        if event_type == "step_finish":
+            out.append(
+                {
+                    "event": "opencode_step_finish",
+                    "source": "opencode",
+                    "step": step,
+                    "reason": part.get("reason"),
+                    "cost": part.get("cost"),
+                    "tokens": part.get("tokens"),
+                    "opencode_line": event.get("_opencode_line"),
+                }
+            )
+    return out
+
+
+def _normalize_opencode_tool_use(part: dict[str, object], step: int, line_no: object) -> list[dict[str, object]]:
+    state = part.get("state")
+    if not isinstance(state, dict):
+        state = {}
+    tool_input = state.get("input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    metadata = state.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    call_id = str(part.get("callID") or part.get("id") or f"opencode-{line_no}")
+    command = str(tool_input.get("command") or "")
+    tool_name = "submit_flag" if _is_submit_flag_command(command) else str(part.get("tool") or "tool")
+    arguments: dict[str, object]
+    if tool_name == "submit_flag":
+        arguments = {"flag": _extract_flag_from_command(command), "command": command}
+        result = _opencode_submit_result(str(state.get("output") or metadata.get("output") or ""))
+    else:
+        arguments = {"command": command, "description": tool_input.get("description")}
+        result = _opencode_shell_result(state, metadata)
+    assistant = {
+        "event": "assistant",
+        "source": "opencode",
+        "step": step,
+        "message": {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            ],
+        },
+        "opencode_line": line_no,
+    }
+    tool_result = {
+        "event": "tool_result",
+        "source": "opencode",
+        "step": step,
+        "tool_call_id": call_id,
+        "result": result,
+        "opencode_line": line_no,
+    }
+    return [assistant, tool_result]
+
+
+def _opencode_shell_result(state: dict[object, object], metadata: dict[object, object]) -> dict[str, object]:
+    output = str(state.get("output") or metadata.get("output") or "")
+    exit_code_raw = metadata.get("exit")
+    try:
+        exit_code = int(exit_code_raw) if exit_code_raw is not None else None
+    except (TypeError, ValueError):
+        exit_code = None
+    status = state.get("status")
+    return {
+        "ok": status == "completed" and exit_code in (None, 0),
+        "exit_code": exit_code,
+        "stdout": output,
+        "stderr": "",
+        "timed_out": status == "timed_out",
+        "elapsed_seconds": _opencode_elapsed_seconds(state),
+    }
+
+
+def _opencode_elapsed_seconds(state: dict[object, object]) -> float | None:
+    time_data = state.get("time")
+    if not isinstance(time_data, dict):
+        return None
+    start = time_data.get("start")
+    end = time_data.get("end")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end >= start:
+        return (end - start) / 1000
+    return None
+
+
+def _is_submit_flag_command(command: str) -> bool:
+    return bool("submit_flag" in command.split()) or "./submit_flag" in command
+
+
+def _extract_flag_from_command(command: str) -> str:
+    for prefix in ("CYBERBENCH{", "CTF{"):
+        start = command.find(prefix)
+        if start >= 0:
+            end = command.find("}", start)
+            if end >= 0:
+                return command[start : end + 1]
+    return ""
+
+
+def _opencode_submit_result(output: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError:
+        parsed = {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
 
 
 def _make_handler_class(

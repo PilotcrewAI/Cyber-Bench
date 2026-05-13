@@ -386,7 +386,10 @@
         const stepVal = asStep(e.step);
         const consumed = [e];
         i += 1;
-        while (i < list.length && list[i].event === "tool_result") {
+        while (
+          i < list.length &&
+          (list[i].event === "tool_result" || list[i].event === "opencode_step_finish")
+        ) {
           const tr = list[i];
           const ts = asStep(tr.step);
           if (ts !== stepVal) {
@@ -394,6 +397,9 @@
           }
           consumed.push(tr);
           i += 1;
+          if (tr.event === "opencode_step_finish") {
+            break;
+          }
         }
         const first = consumed[0];
         const st = typeof first.step === "number" ? first.step : "?";
@@ -415,6 +421,16 @@
         continue;
       }
 
+      if (ev === "opencode_step_finish") {
+        out.push({
+          kind: "finish",
+          label: `OpenCode step finish (step ${e.step ?? "?"})`,
+          entries: [e],
+        });
+        i += 1;
+        continue;
+      }
+
       out.push({
         kind: "unknown",
         label: `Unknown event: ${ev || "(missing)"}`,
@@ -430,10 +446,11 @@
     errorEl.textContent = msg;
   }
 
-  /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string} bundle @param {string} run */
-  function renderResultPanel(result, resultPath, transcriptPath, bundle, run) {
+  /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string | null} opencodePath @param {string} bundle @param {string} run */
+  function renderResultPanel(result, resultPath, transcriptPath, opencodePath, bundle, run) {
     runTitleEl.textContent = `${bundle} / ${run}`;
-    runPathsEl.textContent = `${transcriptPath}${resultPath ? ` • ${resultPath}` : ""}`;
+    runPathsEl.textContent =
+      `${transcriptPath}${opencodePath ? ` • ${opencodePath}` : ""}${resultPath ? ` • ${resultPath}` : ""}`;
 
     resultBody.innerHTML = "";
 
@@ -467,6 +484,9 @@
     row("status", r.status);
     row("bundle_id", r.bundle_id);
     row("model", r.model);
+    row("backend", r.backend);
+    row("opencode_model", r.opencode_model);
+    row("opencode_usage", r.opencode_usage);
     row("steps", r.steps);
     row("elapsed_seconds", r.elapsed_seconds);
     row("cost_usd", r.cost_usd);
@@ -610,6 +630,7 @@
       data.result,
       data.result_path != null ? String(data.result_path) : null,
       data.transcript_path != null ? String(data.transcript_path) : "",
+      data.opencode_path != null ? String(data.opencode_path) : null,
       bundle,
       run,
     );
@@ -700,7 +721,7 @@
     const h2 = document.createElement("h2");
     const badge = document.createElement("span");
     badge.className = "badge turn";
-    badge.textContent = "Assistant";
+    badge.textContent = entry.source === "opencode" ? "OpenCode" : "Assistant";
     h2.appendChild(badge);
     if (typeof entry.step === "number") {
       h2.appendChild(document.createTextNode(` Step ${entry.step}`));
@@ -972,7 +993,9 @@
       }
 
       row("status", r.status);
+      row("backend", r.backend);
       row("elapsed_seconds", r.elapsed_seconds);
+      row("opencode_usage", r.opencode_usage);
       row("steps", r.steps);
       row("cost_usd", r.cost_usd);
       row("prompt_tokens", r.prompt_tokens);
@@ -986,6 +1009,51 @@
       const pre = document.createElement("pre");
       setPreText(pre, stringifyPretty(entry));
       wrap.appendChild(pre);
+    }
+    return wrap;
+  }
+
+  /** @param {TranscriptRecord} entry @param {boolean} inline */
+  function renderOpenCodeStepFinish(entry, inline) {
+    const wrap = document.createElement("div");
+    wrap.className = inline ? "block" : "panel";
+    const h2 = document.createElement(inline ? "h3" : "h2");
+    const badge = document.createElement("span");
+    badge.className = "badge finish";
+    badge.textContent = inline ? "OpenCode step finish" : "OpenCode step";
+    h2.appendChild(badge);
+    if (typeof entry.step === "number") {
+      h2.appendChild(document.createTextNode(` Step ${entry.step}`));
+    }
+    const parts = [];
+    if (entry.reason != null) {
+      parts.push(`reason=${entry.reason}`);
+    }
+    if (entry.cost != null) {
+      parts.push(`cost=$${entry.cost}`);
+    }
+    if (parts.length) {
+      const span = document.createElement("span");
+      span.className = "usage";
+      span.textContent = ` (${parts.join(", ")})`;
+      h2.appendChild(span);
+    }
+    wrap.appendChild(h2);
+    if (entry.tokens != null) {
+      const block = inline ? wrap : document.createElement("div");
+      if (!inline) {
+        block.className = "block";
+      }
+      const h3 = document.createElement("h3");
+      h3.textContent = "Tokens";
+      block.appendChild(h3);
+      const pre = document.createElement("pre");
+      pre.className = "mono";
+      setPreText(pre, stringifyPretty(entry.tokens));
+      block.appendChild(pre);
+      if (!inline) {
+        wrap.appendChild(block);
+      }
     }
     return wrap;
   }
@@ -1029,6 +1097,9 @@
           );
           break;
         }
+        case "opencode_step_finish":
+          node = renderOpenCodeStepFinish(entry, sl.entries.length > 1);
+          break;
         default: {
           const wrap = document.createElement("div");
           wrap.className = "panel";

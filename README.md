@@ -38,6 +38,7 @@ python -m cyberbench.cli check-openrouter --model openai/gpt-5-codex
 python -m cyberbench.cli validate-bundle bundles/smoke-web/manifest.json
 python -m cyberbench.cli prepare-run bundles/smoke-web/manifest.json
 python -m cyberbench.cli run bundles/smoke-web/manifest.json
+python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json
 ```
 
 `run` requires Docker with the Compose plugin. It starts a target gateway,
@@ -53,6 +54,36 @@ Use OpenRouter model IDs directly:
 python -m cyberbench.cli run bundles/smoke-web/manifest.json --model anthropic/claude-haiku-4.5
 python -m cyberbench.cli run bundles/smoke-web/manifest.json --model openai/gpt-5.4-nano
 ```
+
+### OpenCode backend
+
+`run-opencode` uses the standard `opencode` CLI as the coding agent while
+keeping the benchmark manifest as the source of truth for visible targets. It
+starts the same Docker target network, mounts an empty per-run workspace into
+the attacker container, writes two helper commands into that workspace, and
+runs opencode from that isolated directory:
+
+- `./bench_shell '<command>'` executes inside the attacker container.
+- `./submit_flag '<flag>'` submits to the Cyber-Bench scorer.
+
+Install opencode separately before using this backend:
+
+```bash
+npm i -g opencode-ai@latest
+```
+
+Then run:
+
+```bash
+python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json \
+  --model anthropic/claude-haiku-4.5
+```
+
+The OpenCode model id is passed as `openrouter/<model>`, so the same
+OpenRouter model IDs used by the API-shell runner should be used here.
+`manifest.target.ports` controls the target URLs shown to opencode, for example
+`http://target:8081/`; challenge source directories are not mounted into the
+opencode workspace.
 
 Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`. The
 timestamp is the machine’s **local** wall clock (`YYYYMMDD_HHMMSS`). OpenRouter
