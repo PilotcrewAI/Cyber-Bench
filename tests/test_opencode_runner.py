@@ -52,6 +52,9 @@ class OpenCodeRunnerTests(unittest.TestCase):
 
             config = json.loads((workspace / ".opencode" / "opencode.json").read_text(encoding="utf-8"))
             agent = (workspace / ".opencode" / "agent" / "cyberbench.md").read_text(encoding="utf-8")
+            plugin = (workspace / ".opencode" / "plugins" / "cyberbench-shell-guard.js").read_text(
+                encoding="utf-8"
+            )
             self.assertEqual(config["share"], "disabled")
             self.assertEqual(config["permission"]["external_directory"], "deny")
             self.assertEqual(env["HOME"], str(runner.opencode_home))
@@ -65,6 +68,11 @@ class OpenCodeRunnerTests(unittest.TestCase):
             self.assertIn('    "./submit_flag *": allow', agent)
             self.assertIn("  external_directory: deny", agent)
             self.assertNotIn("  bash: allow", agent)
+            self.assertIn('"tool.execute.before"', plugin)
+            self.assertIn("function isQuotedHelperInvocation(command)", plugin)
+            self.assertIn("isQuotedHelperInvocation(command)", plugin)
+            self.assertIn("./bench_shell '<command>'", plugin)
+            self.assertIn("./submit_flag '<flag>'", plugin)
 
     def test_targets_doc_comes_from_manifest_target_ports(self) -> None:
         manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))

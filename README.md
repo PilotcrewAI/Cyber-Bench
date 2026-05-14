@@ -101,7 +101,7 @@ tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 ## Transcript viewer
 
 For an interactive step-through of agent turns (plus the run summary from
-`result.json`), start the small local server and open the URL it prints:
+`result.json`), start the local server and open the URL it prints:
 
 ```bash
 python transcript-viewer/server.py

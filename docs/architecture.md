@@ -117,9 +117,13 @@ CLI** running on the **host**.
 - **`./bench_shell`** — A host-executable script in the workspace that runs
   `docker compose -f <run_dir>/compose.yml -p <project> exec -T attacker sh -lc "..."`.
   The OpenCode agent config denies plain host bash and only allows bash
-  commands matching `./bench_shell *` or `./submit_flag *`, so recon executes
-  inside the attacker container (same as the API runner’s shell tool),
-  including `curl http://target:...`.
+  commands matching `./bench_shell *` or `./submit_flag *`. A
+  `.opencode/plugins/cyberbench-shell-guard.js` hook also rejects bash commands
+  unless they are shaped exactly as one quoted helper invocation, preventing
+  host-side wrappers like `cd ... && ./bench_shell ...` or
+  `./bench_shell ... | head`. Recon therefore executes inside the attacker
+  container (same as the API runner’s shell tool), including
+  `curl http://target:...`.
 - **`./submit_flag`** — A small Python helper that `POST`s `{"flag": "..."}` to
   a local **scoring HTTP server** on the host (`ThreadingHTTPServer` on
   `127.0.0.1`, ephemeral port). The script tries

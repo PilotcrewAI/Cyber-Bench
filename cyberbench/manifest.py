@@ -9,7 +9,7 @@ from typing import Any
 @dataclass(frozen=True)
 class BudgetConfig:
     command_timeout_seconds: int = 30
-    max_steps: int = 60
+    max_steps: int = 1000 #Virtually infinite, but we use the max cost usd to stop the agent
     max_cost_usd: float | None = None
 
 
@@ -85,7 +85,7 @@ def load_manifest(path: Path) -> BundleManifest:
         services=services,
         budgets=BudgetConfig(
             command_timeout_seconds=int(budgets.get("command_timeout_seconds", 30)),
-            max_steps=int(budgets.get("max_steps", 60)),
+            max_steps=int(budgets.get("max_steps", 1000)),
             max_cost_usd=_optional_float(budgets.get("max_cost_usd")),
         ),
         levels={int(level): str(hint) for level, hint in levels.items()},

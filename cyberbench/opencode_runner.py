@@ -191,8 +191,11 @@ class OpenCodeRunner:
     def _prepare_workspace(self) -> None:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.opencode_home.mkdir(parents=True, exist_ok=True)
-        opencode_dir = self.workspace / ".opencode" / "agent"
+        config_dir = self.workspace / ".opencode"
+        opencode_dir = config_dir / "agent"
         opencode_dir.mkdir(parents=True, exist_ok=True)
+        plugins_dir = config_dir / "plugins"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
         (self.workspace / ".opencode" / "opencode.json").write_text(
             json.dumps(
                 {
@@ -205,6 +208,7 @@ class OpenCodeRunner:
             + "\n"
         )
         (opencode_dir / "cyberbench.md").write_text(self._agent_config())
+        (plugins_dir / "cyberbench-shell-guard.js").write_text(_opencode_shell_guard_plugin())
         self._write_bench_shell()
         (self.workspace / "TARGETS.md").write_text(self._targets_doc())
         self._write_benchmark_static_snapshot()
@@ -496,6 +500,47 @@ def _opencode_model(model: str) -> str:
 
 def _redacted_command(cmd: list[str]) -> list[str]:
     return ["<prompt>" if index == len(cmd) - 1 else value for index, value in enumerate(cmd)]
+
+
+def _opencode_shell_guard_plugin() -> str:
+    return """export const CyberBenchShellGuard = async () => {
+  function isQuotedHelperInvocation(command) {
+    const prefixes = ["./bench_shell ", "./submit_flag "];
+    const prefix = prefixes.find((item) => command.startsWith(item));
+    if (!prefix) return false;
+
+    const argument = command.slice(prefix.length);
+    if (argument.length < 2) return false;
+
+    const quote = argument[0];
+    if (quote !== "'" && quote !== '"') return false;
+
+    for (let index = 1; index < argument.length; index += 1) {
+      const char = argument[index];
+      if (quote === '"' && char === "\\\\") {
+        index += 1;
+        continue;
+      }
+      if (char === quote) return index === argument.length - 1;
+    }
+
+    return false;
+  }
+
+  return {
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "bash") return;
+
+      const command = String(output.args.command || "").trim();
+      if (isQuotedHelperInvocation(command)) return;
+
+      throw new Error(
+        "Cyber-Bench only allows bash commands shaped as ./bench_shell '<command>' or ./submit_flag '<flag>'"
+      );
+    },
+  };
+};
+"""
 
 
 def _drain_pipe(pipe: Any, lines: list[str]) -> None:
