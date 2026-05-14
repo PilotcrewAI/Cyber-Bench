@@ -59,12 +59,18 @@ python -m cyberbench.cli run bundles/smoke-web/manifest.json --model openai/gpt-
 
 `run-opencode` uses the `opencode` CLI as the coding agent while
 keeping the benchmark manifest as the source of truth for visible targets. It
-starts a Docker target network, mounts an empty per-run workspace into
-the attacker container, writes two helper commands into that workspace, and
-runs opencode from that isolated directory:
+starts a Docker target network, creates an empty execution workspace under
+`/tmp/cyberbench-opencode/`, mounts that workspace into the attacker container,
+writes two helper commands into it, and runs opencode from that isolated
+directory:
 
 - `./bench_shell '<command>'` executes inside the attacker container.
 - `./submit_flag '<flag>'` submits to the Cyber-Bench scorer.
+
+The OpenCode subprocess uses a clean per-run home/config directory, disables
+project config discovery, and denies plain host bash commands except for the two
+helpers above. This prevents repo-level `AGENTS.md` / `CLAUDE.md` files and
+host-only commands from contaminating benchmark runs.
 
 Install opencode separately before using this backend:
 

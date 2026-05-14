@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,12 +39,15 @@ class OpenCodeRunner:
         openrouter_api_key: str,
         opencode_bin: str = "opencode",
         level: int | None = None,
+        workspace: Path | None = None,
     ) -> None:
         self.manifest = manifest
         self.runtime = runtime
         self.model = model
         self.run_dir = run_dir
-        self.workspace = run_dir / "workspace"
+        self.workspace = workspace or _default_opencode_workspace(run_dir)
+        self.opencode_home = self.workspace.parent / "home"
+        self.opencode_data_dir = self.opencode_home / ".local" / "share"
         self.openrouter_api_key = openrouter_api_key
         self.opencode_bin = opencode_bin
         self.level = level
@@ -82,7 +87,7 @@ class OpenCodeRunner:
             self.state.status = "solved"
         elif completed["budget_exhausted"]:
             self.state.status = "budget_exhausted"
-        elif completed.get("error"):
+        elif completed.get("error") or completed.get("opencode_stop_reason") == "length":
             self.state.status = "opencode_error"
             self.state.error = str(completed["error"])
         elif completed["returncode"] != 0:
@@ -108,9 +113,7 @@ class OpenCodeRunner:
             "--dangerously-skip-permissions",
             self._prompt(),
         ]
-        env = os.environ.copy()
-        env["OPENROUTER_API_KEY"] = self.openrouter_api_key
-        env.setdefault("NO_COLOR", "1")
+        env = self._opencode_env()
         self._record({"event": "opencode_start", "command": _redacted_command(cmd)})
         process = subprocess.Popen(
             cmd,
@@ -147,7 +150,24 @@ class OpenCodeRunner:
         stderr = "".join(stderr_lines)
         stdout_path.write_text(stdout)
         stderr_path.write_text(stderr)
-        session_export = _export_opencode_session(self.workspace, self.run_dir, stdout_lines)
+        session_export = _export_opencode_session(
+            self.workspace,
+            self.run_dir,
+            stdout_lines,
+            data_dir=self.opencode_data_dir,
+        )
+        opencode_stop_reason = None
+        if session_export:
+            session_usage = session_export.get("usage")
+            if isinstance(session_usage, dict) and (
+                int(session_usage.get("steps") or 0) > int(usage.get("steps") or 0)
+                or float(session_usage.get("cost_usd") or 0.0) > float(usage.get("cost_usd") or 0.0)
+            ):
+                usage = session_usage
+                self._warn_for_opencode_usage(usage)
+                if self._opencode_budget_exhausted(usage):
+                    budget_exhausted = True
+            opencode_stop_reason = session_export.get("stop_reason")
         usage["cost_usd"] = round(float(usage["cost_usd"]), 10)
         output = {
             "event": "opencode_finish",
@@ -161,6 +181,8 @@ class OpenCodeRunner:
             output["opencode_session_path"] = session_export["path"]
             output["opencode_session_id"] = session_export["session_id"]
             output["opencode_session_parts"] = session_export["parts"]
+        if opencode_stop_reason:
+            output["opencode_stop_reason"] = opencode_stop_reason
         if opencode_error:
             output["error"] = opencode_error
         self._record(output)
@@ -168,15 +190,37 @@ class OpenCodeRunner:
 
     def _prepare_workspace(self) -> None:
         self.workspace.mkdir(parents=True, exist_ok=True)
+        self.opencode_home.mkdir(parents=True, exist_ok=True)
         opencode_dir = self.workspace / ".opencode" / "agent"
         opencode_dir.mkdir(parents=True, exist_ok=True)
         (self.workspace / ".opencode" / "opencode.json").write_text(
-            json.dumps({"share": "disabled"}, indent=2) + "\n"
+            json.dumps(
+                {
+                    "$schema": "https://opencode.ai/config.json",
+                    "share": "disabled",
+                    "permission": {"external_directory": "deny"},
+                },
+                indent=2,
+            )
+            + "\n"
         )
         (opencode_dir / "cyberbench.md").write_text(self._agent_config())
         self._write_bench_shell()
         (self.workspace / "TARGETS.md").write_text(self._targets_doc())
         self._write_benchmark_static_snapshot()
+
+    def _opencode_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        env["OPENROUTER_API_KEY"] = self.openrouter_api_key
+        env["HOME"] = str(self.opencode_home)
+        env["XDG_CONFIG_HOME"] = str(self.opencode_home / ".config")
+        env["XDG_DATA_HOME"] = str(self.opencode_data_dir)
+        env["OPENCODE_CONFIG"] = str(self.workspace / ".opencode" / "opencode.json")
+        env["OPENCODE_CONFIG_DIR"] = str(self.workspace / ".opencode")
+        env["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+        env["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] = "1"
+        env.setdefault("NO_COLOR", "1")
+        return env
 
     def _write_bench_shell(self) -> None:
         script = f"""#!/bin/sh
@@ -232,12 +276,16 @@ else:
 mode: primary
 steps: {self.manifest.budgets.max_steps}
 permission:
-  bash: allow
+  bash:
+    "*": deny
+    "./bench_shell *": allow
+    "./submit_flag *": allow
   read: allow
   edit: allow
   list: allow
   glob: allow
   grep: allow
+  external_directory: deny
   webfetch: deny
   websearch: deny
 ---
@@ -347,11 +395,14 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
             "opencode_stdout_path": completed["stdout_path"],
             "opencode_stderr_path": completed["stderr_path"],
             "workspace_path": str(self.workspace),
+            "opencode_home_path": str(self.opencode_home),
         }
         if completed.get("opencode_session_path"):
             result["opencode_session_path"] = completed["opencode_session_path"]
             result["opencode_session_id"] = completed.get("opencode_session_id")
             result["opencode_session_parts"] = completed.get("opencode_session_parts")
+        if completed.get("opencode_stop_reason"):
+            result["opencode_stop_reason"] = completed["opencode_stop_reason"]
         if self.state.error:
             result["error"] = self.state.error
         return result
@@ -463,6 +514,12 @@ def _terminate_process(process: subprocess.Popen[str]) -> None:
         process.wait()
 
 
+def _default_opencode_workspace(run_dir: Path) -> Path:
+    resolved = str(run_dir.resolve())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+    return Path(tempfile.gettempdir()) / "cyberbench-opencode" / f"{run_dir.name}-{digest}" / "workspace"
+
+
 def _empty_opencode_usage() -> dict[str, Any]:
     return {
         "steps": 0,
@@ -481,19 +538,25 @@ def _add_opencode_step_usage(usage: dict[str, Any], line: str) -> bool:
         event = json.loads(line)
     except json.JSONDecodeError:
         return False
-    if event.get("type") != "step_finish":
+    part = _opencode_step_finish_part(event)
+    if part is None:
         return False
-    part = event.get("part") or {}
     usage["steps"] += 1
-    usage["cost_usd"] += float(part.get("cost") or 0.0)
-    tokens = part.get("tokens") or {}
-    usage["tokens"]["input"] += int(tokens.get("input") or 0)
-    usage["tokens"]["output"] += int(tokens.get("output") or 0)
-    usage["tokens"]["reasoning"] += int(tokens.get("reasoning") or 0)
-    cache = tokens.get("cache") or {}
-    usage["tokens"]["cache"]["read"] += int(cache.get("read") or 0)
-    usage["tokens"]["cache"]["write"] += int(cache.get("write") or 0)
+    _add_opencode_usage_values(usage, part)
     return True
+
+
+def _opencode_step_finish_part(event: Any) -> dict[str, Any] | None:
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") == "step_finish":
+        part = event.get("part") or event.get("data") or {}
+        return part if isinstance(part, dict) else {}
+    if event.get("type") == "part":
+        data = event.get("data") or {}
+        if isinstance(data, dict) and data.get("type") == "step-finish":
+            return data
+    return None
 
 
 def _opencode_error_from_line(line: str) -> str | None:
@@ -518,8 +581,14 @@ def _opencode_error_from_line(line: str) -> str | None:
     return message
 
 
-def _export_opencode_session(workspace: Path, run_dir: Path, stdout_lines: list[str]) -> dict[str, Any] | None:
-    db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+def _export_opencode_session(
+    workspace: Path,
+    run_dir: Path,
+    stdout_lines: list[str],
+    *,
+    data_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    db_path = (data_dir or (Path.home() / ".local" / "share")) / "opencode" / "opencode.db"
     if not db_path.is_file():
         return None
     try:
@@ -549,6 +618,7 @@ def _export_opencode_session(workspace: Path, run_dir: Path, stdout_lines: list[
     except sqlite3.Error:
         return None
 
+    summary = _summarize_opencode_session(session, parts)
     export_path = run_dir / "opencode.session.jsonl"
     with export_path.open("w", encoding="utf-8") as handle:
         handle.write(json.dumps({"type": "session", "session": _sqlite_row_to_json(session)}, sort_keys=True) + "\n")
@@ -581,7 +651,46 @@ def _export_opencode_session(workspace: Path, run_dir: Path, stdout_lines: list[
                 )
                 + "\n"
             )
-    return {"path": str(export_path), "session_id": session_id, "parts": len(parts)}
+    return {"path": str(export_path), "session_id": session_id, "parts": len(parts), **summary}
+
+
+def _summarize_opencode_session(session: sqlite3.Row | dict[str, Any], parts: list[Any]) -> dict[str, Any]:
+    usage = _empty_opencode_usage()
+    stop_reason = None
+    for row in parts:
+        raw = row["data"] if isinstance(row, sqlite3.Row) else row.get("data")
+        data = _json_object(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, dict) or data.get("type") != "step-finish":
+            continue
+        usage["steps"] += 1
+        _add_opencode_usage_values(usage, data)
+        if data.get("reason"):
+            stop_reason = str(data["reason"])
+
+    session_data = _sqlite_row_to_json(session) if isinstance(session, sqlite3.Row) else session
+    if isinstance(session_data, dict):
+        if not usage["cost_usd"]:
+            usage["cost_usd"] = float(session_data.get("cost") or 0.0)
+        tokens = usage["tokens"]
+        if not any(tokens[key] for key in ("input", "output", "reasoning")):
+            tokens["input"] = int(session_data.get("tokens_input") or 0)
+            tokens["output"] = int(session_data.get("tokens_output") or 0)
+            tokens["reasoning"] = int(session_data.get("tokens_reasoning") or 0)
+            tokens["cache"]["read"] = int(session_data.get("tokens_cache_read") or 0)
+            tokens["cache"]["write"] = int(session_data.get("tokens_cache_write") or 0)
+    usage["cost_usd"] = round(float(usage["cost_usd"]), 10)
+    return {"usage": usage, "stop_reason": stop_reason}
+
+
+def _add_opencode_usage_values(usage: dict[str, Any], source: dict[str, Any]) -> None:
+    usage["cost_usd"] += float(source.get("cost") or 0.0)
+    tokens = source.get("tokens") or {}
+    usage["tokens"]["input"] += int(tokens.get("input") or 0)
+    usage["tokens"]["output"] += int(tokens.get("output") or 0)
+    usage["tokens"]["reasoning"] += int(tokens.get("reasoning") or 0)
+    cache = tokens.get("cache") or {}
+    usage["tokens"]["cache"]["read"] += int(cache.get("read") or 0)
+    usage["tokens"]["cache"]["write"] += int(cache.get("write") or 0)
 
 
 def _opencode_session_id_from_stdout(stdout_lines: list[str]) -> str | None:

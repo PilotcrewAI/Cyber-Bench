@@ -14,7 +14,7 @@ from cyberbench.config import (
 )
 from cyberbench.manifest import BundleManifest, load_manifest, validate_manifest
 from cyberbench.openrouter import OpenRouterClient, first_message
-from cyberbench.opencode_runner import OpenCodeRunner
+from cyberbench.opencode_runner import OpenCodeRunner, _default_opencode_workspace
 from cyberbench.runner import AgentRunner
 from cyberbench.runtime.docker import DEFAULT_ATTACKER_IMAGE, DockerRuntime
 
@@ -202,7 +202,7 @@ def _run_opencode(args: argparse.Namespace) -> int:
     ts = local_timestamp_slug()
     bundle_dir = Path("runs") / path_slug(manifest.bundle_id)
     run_dir = bundle_dir / f"{ts}_opencode_{path_slug(model)}"
-    workspace = run_dir / "workspace"
+    workspace = _default_opencode_workspace(run_dir)
     workspace.mkdir(parents=True, exist_ok=True)
     runtime = DockerRuntime(
         manifest,
@@ -218,6 +218,7 @@ def _run_opencode(args: argparse.Namespace) -> int:
         openrouter_api_key=api_key,
         opencode_bin=args.opencode_bin,
         level=args.level,
+        workspace=workspace,
     )
     try:
         runner.check_prerequisites()

@@ -32,6 +32,7 @@
       "env": {
         "FLAG": "CTF{itisquitechallengingtowriteacsssanitizer}",
         "NO_CAPTCHA": "1",
+        "PUBLIC_ORIGIN": "http://gctf-2024-in-the-shadows:1337",
         "XSSBOT_HOST": "gctf-2024-in-the-shadows-bot",
         "XSSBOT_PORT": "1337"
       },

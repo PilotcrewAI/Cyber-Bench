@@ -98,20 +98,28 @@ sequenceDiagram
 replaces the in-process `AgentRunner` + model API loop with the **OpenCode
 CLI** running on the **host**.
 
-- **Per-run workspace** — The CLI creates `runs/.../workspace` and passes it to
-  `DockerRuntime` as `attacker_workspace`, so Compose **bind-mounts** that
-  directory to **`/workspace` in the attacker container**. Challenge source
-  trees are not copied there; only helper files and OpenCode config.
+- **Per-run execution workspace** — The CLI creates a workspace under
+  `/tmp/cyberbench-opencode/` and passes it to `DockerRuntime` as
+  `attacker_workspace`, so Compose **bind-mounts** that directory to
+  **`/workspace` in the attacker container**. Challenge source trees are not
+  copied there; only helper files and OpenCode config. The workspace is outside
+  the Cyber-Bench git tree so OpenCode cannot infer repo-level project context
+  from parent directories.
 - **OpenCode process** — `OpenCodeRunner` runs
   `opencode run --dir <workspace> --agent cyberbench --model openrouter/<id> ...`
   via `subprocess`, with `OPENROUTER_API_KEY` set. Agent instructions live in
   `.opencode/agent/cyberbench.md`; the user prompt includes `TARGETS.md`
-  (gateway URLs like `http://target:<port>/`).
+  (gateway URLs like `http://target:<port>/`). The subprocess gets a clean
+  per-run `HOME`, `OPENCODE_CONFIG`, and `OPENCODE_CONFIG_DIR`, plus
+  `OPENCODE_DISABLE_PROJECT_CONFIG=1` and
+  `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1`, so local `AGENTS.md` / `CLAUDE.md`
+  files from this repository are not loaded.
 - **`./bench_shell`** — A host-executable script in the workspace that runs
   `docker compose -f <run_dir>/compose.yml -p <project> exec -T attacker sh -lc "..."`.
-  When OpenCode runs shell commands, **recon still executes inside the
-  attacker container** (same as the API runner’s shell tool), including
-  `curl http://target:...`.
+  The OpenCode agent config denies plain host bash and only allows bash
+  commands matching `./bench_shell *` or `./submit_flag *`, so recon executes
+  inside the attacker container (same as the API runner’s shell tool),
+  including `curl http://target:...`.
 - **`./submit_flag`** — A small Python helper that `POST`s `{"flag": "..."}` to
   a local **scoring HTTP server** on the host (`ThreadingHTTPServer` on
   `127.0.0.1`, ephemeral port). The script tries
