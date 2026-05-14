@@ -481,11 +481,11 @@
     errorEl.textContent = msg;
   }
 
-  /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string | null} opencodePath @param {string} bundle @param {string} run */
-  function renderResultPanel(result, resultPath, transcriptPath, opencodePath, bundle, run) {
+  /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string | null} opencodePath @param {string | null} opencodeSessionPath @param {string} bundle @param {string} run */
+  function renderResultPanel(result, resultPath, transcriptPath, opencodePath, opencodeSessionPath, bundle, run) {
     runTitleEl.textContent = `${bundle} / ${run}`;
     runPathsEl.textContent =
-      `${transcriptPath}${opencodePath ? ` • ${opencodePath}` : ""}${resultPath ? ` • ${resultPath}` : ""}`;
+      `${transcriptPath}${opencodePath ? ` • ${opencodePath}` : ""}${opencodeSessionPath ? ` • ${opencodeSessionPath}` : ""}${resultPath ? ` • ${resultPath}` : ""}`;
 
     resultBody.innerHTML = "";
 
@@ -803,6 +803,7 @@
       data.result_path != null ? String(data.result_path) : null,
       data.transcript_path != null ? String(data.transcript_path) : "",
       data.opencode_path != null ? String(data.opencode_path) : null,
+      data.opencode_session_path != null ? String(data.opencode_session_path) : null,
       bundle,
       run,
     );

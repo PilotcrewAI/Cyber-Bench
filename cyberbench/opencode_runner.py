@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -146,6 +147,7 @@ class OpenCodeRunner:
         stderr = "".join(stderr_lines)
         stdout_path.write_text(stdout)
         stderr_path.write_text(stderr)
+        session_export = _export_opencode_session(self.workspace, self.run_dir, stdout_lines)
         usage["cost_usd"] = round(float(usage["cost_usd"]), 10)
         output = {
             "event": "opencode_finish",
@@ -155,6 +157,10 @@ class OpenCodeRunner:
             "stderr_path": str(stderr_path),
             "usage": usage,
         }
+        if session_export:
+            output["opencode_session_path"] = session_export["path"]
+            output["opencode_session_id"] = session_export["session_id"]
+            output["opencode_session_parts"] = session_export["parts"]
         if opencode_error:
             output["error"] = opencode_error
         self._record(output)
@@ -342,6 +348,10 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
             "opencode_stderr_path": completed["stderr_path"],
             "workspace_path": str(self.workspace),
         }
+        if completed.get("opencode_session_path"):
+            result["opencode_session_path"] = completed["opencode_session_path"]
+            result["opencode_session_id"] = completed.get("opencode_session_id")
+            result["opencode_session_parts"] = completed.get("opencode_session_parts")
         if self.state.error:
             result["error"] = self.state.error
         return result
@@ -506,6 +516,112 @@ def _opencode_error_from_line(line: str) -> str | None:
     if isinstance(name, str) and name and name not in message:
         return f"{name}: {message}"
     return message
+
+
+def _export_opencode_session(workspace: Path, run_dir: Path, stdout_lines: list[str]) -> dict[str, Any] | None:
+    db_path = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+    if not db_path.is_file():
+        return None
+    try:
+        session_id = _opencode_session_id_from_stdout(stdout_lines)
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            if not session_id:
+                session_id = _find_opencode_session_id(conn, workspace)
+            if not session_id:
+                return None
+            session = conn.execute(
+                "select * from session where id = ?",
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                return None
+            messages = conn.execute(
+                "select id, time_created, time_updated, data from message "
+                "where session_id = ? order by time_created, id",
+                (session_id,),
+            ).fetchall()
+            parts = conn.execute(
+                "select id, message_id, time_created, time_updated, data from part "
+                "where session_id = ? order by time_created, id",
+                (session_id,),
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+
+    export_path = run_dir / "opencode.session.jsonl"
+    with export_path.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "session", "session": _sqlite_row_to_json(session)}, sort_keys=True) + "\n")
+        for row in messages:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "id": row["id"],
+                        "time_created": row["time_created"],
+                        "time_updated": row["time_updated"],
+                        "data": _json_object(row["data"]),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        for row in parts:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "part",
+                        "id": row["id"],
+                        "message_id": row["message_id"],
+                        "time_created": row["time_created"],
+                        "time_updated": row["time_updated"],
+                        "data": _json_object(row["data"]),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    return {"path": str(export_path), "session_id": session_id, "parts": len(parts)}
+
+
+def _opencode_session_id_from_stdout(stdout_lines: list[str]) -> str | None:
+    for line in stdout_lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        session_id = event.get("sessionID") or event.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
+def _find_opencode_session_id(conn: sqlite3.Connection, workspace: Path) -> str | None:
+    workspace_path = str(workspace.resolve())
+    row = conn.execute(
+        "select id from session where directory = ? or path = ? order by time_created desc limit 1",
+        (workspace_path, str(workspace)),
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row["id"])
+
+
+def _sqlite_row_to_json(row: sqlite3.Row) -> dict[str, Any]:
+    out = dict(row)
+    for key, value in list(out.items()):
+        if isinstance(value, str) and value[:1] in ("{", "["):
+            out[key] = _json_object(value)
+    return out
+
+
+def _json_object(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
 
 
 COST_WARNINGS: tuple[tuple[int, str], ...] = (

@@ -106,14 +106,36 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             out.append(obj)
         return out
 
+    def _read_opencode_session_lines(self, run_dir: Path) -> list[dict[str, object]]:
+        opath = run_dir / "opencode.session.jsonl"
+        if not opath.is_file():
+            return []
+        lines = opath.read_text(encoding="utf-8").splitlines()
+        out: list[dict[str, object]] = []
+        for i, line in enumerate(lines, start=1):
+            s = line.strip()
+            if not s:
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"opencode.session.jsonl: invalid JSON on line {i}") from e
+            if not isinstance(obj, dict):
+                raise ValueError(f"opencode.session.jsonl: line {i} is not a JSON object")
+            obj["_opencode_session_line"] = i
+            out.append(obj)
+        return out
+
     def _merge_opencode_transcript(
         self,
         transcript: list[dict[str, object]],
         opencode: list[dict[str, object]],
+        opencode_session: list[dict[str, object]],
     ) -> list[dict[str, object]]:
-        if not opencode:
+        if not opencode and not opencode_session:
             return transcript
-        normalized = _normalize_opencode_events(opencode)
+        normalized = _normalize_opencode_session_events(opencode_session)
+        normalized.extend(_normalize_opencode_events(opencode))
         prefix: list[dict[str, object]] = []
         suffix: list[dict[str, object]] = []
         for event in transcript:
@@ -311,12 +333,18 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                 run_dir = self._safe_run_path(bundle_q, run_q)
                 transcript = self._read_transcript_lines(run_dir)
                 opencode = self._read_opencode_lines(run_dir)
-                transcript = self._merge_opencode_transcript(transcript, opencode)
+                opencode_session = self._read_opencode_session_lines(run_dir)
+                transcript = self._merge_opencode_transcript(transcript, opencode, opencode_session)
                 result_obj = self._read_result(run_dir)
                 transcript_path = self._relative_repo(run_dir / "transcript.jsonl")
                 opencode_path = (
                     self._relative_repo(run_dir / "opencode.stdout.jsonl")
                     if (run_dir / "opencode.stdout.jsonl").is_file()
+                    else None
+                )
+                opencode_session_path = (
+                    self._relative_repo(run_dir / "opencode.session.jsonl")
+                    if (run_dir / "opencode.session.jsonl").is_file()
                     else None
                 )
                 result_path = (
@@ -337,6 +365,7 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                         "result": result_obj,
                         "transcript_path": transcript_path,
                         "opencode_path": opencode_path,
+                        "opencode_session_path": opencode_session_path,
                         "result_path": result_path,
                         "benchmark_static_path": benchmark_static_path,
                         "benchmark_context": benchmark_context,
@@ -412,6 +441,69 @@ def _normalize_opencode_events(events: list[dict[str, object]]) -> list[dict[str
                     "cost": part.get("cost"),
                     "tokens": part.get("tokens"),
                     "opencode_line": event.get("_opencode_line"),
+                }
+            )
+    return out
+
+
+def _normalize_opencode_session_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    message_roles: dict[str, str] = {}
+    for event in events:
+        if event.get("type") != "message":
+            continue
+        message_id = event.get("id")
+        data = event.get("data")
+        if not isinstance(message_id, str) or not isinstance(data, dict):
+            continue
+        role = data.get("role")
+        if isinstance(role, str):
+            message_roles[message_id] = role
+
+    step = 0
+    for event in events:
+        if event.get("type") != "part":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        part_type = data.get("type")
+        line_no = event.get("_opencode_session_line")
+        message_id = event.get("message_id")
+        role = message_roles.get(message_id) if isinstance(message_id, str) else None
+        if part_type == "step-start":
+            step += 1
+            continue
+        if part_type == "text" and role == "assistant":
+            text = data.get("text")
+            if isinstance(text, str) and text:
+                out.append(
+                    {
+                        "event": "assistant",
+                        "source": "opencode-session",
+                        "step": step,
+                        "message": {"role": "assistant", "content": text},
+                        "opencode_session_line": line_no,
+                    }
+                )
+            continue
+        if part_type == "tool":
+            tool_events = _normalize_opencode_tool_use(data, step, line_no)
+            for tool_event in tool_events:
+                tool_event["source"] = "opencode-session"
+                tool_event["opencode_session_line"] = line_no
+            out.extend(tool_events)
+            continue
+        if part_type == "step-finish":
+            out.append(
+                {
+                    "event": "opencode_step_finish",
+                    "source": "opencode-session",
+                    "step": step,
+                    "reason": data.get("reason"),
+                    "cost": data.get("cost"),
+                    "tokens": data.get("tokens"),
+                    "opencode_session_line": line_no,
                 }
             )
     return out
