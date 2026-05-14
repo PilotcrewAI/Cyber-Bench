@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from cyberbench.benchmark_static import build_opencode_static, write_benchmark_static
-from cyberbench.manifest import BundleManifest
+from cyberbench.manifest import BundleManifest, level_hint_block
 from cyberbench.runtime.docker import DockerRuntime
 
 
@@ -270,7 +270,7 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
             lines.extend(
                 [
                     "",
-                    f"## Selected Hint Level {self.level}",
+                    "## Hint:",
                     "",
                     hint,
                 ]
@@ -290,9 +290,7 @@ Avoid repeating dead probes. If an endpoint returns no useful output several tim
         )
 
     def _level_hint(self) -> str | None:
-        if self.level is None:
-            return None
-        return self.manifest.levels.get(self.level)
+        return level_hint_block(self.manifest, self.level)
 
     def _warn_for_opencode_usage(self, usage: dict[str, Any]) -> None:
         max_cost = self.manifest.budgets.max_cost_usd

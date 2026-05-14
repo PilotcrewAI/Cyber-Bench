@@ -60,6 +60,15 @@ class BundleManifest:
         return tuple(service for service in self.services if service.role == "decoy")
 
 
+def level_hint_block(manifest: BundleManifest, level: int | None) -> str | None:
+    if level is None:
+        return None
+    hints = [(item, manifest.levels[item]) for item in sorted(manifest.levels) if item <= level]
+    if not hints:
+        return None
+    return "\n\n".join(f"Hint {item}:\n{hint}" for item, hint in hints)
+
+
 def load_manifest(path: Path) -> BundleManifest:
     data = json.loads(path.read_text())
     services = tuple(_service(item) for item in data["services"])

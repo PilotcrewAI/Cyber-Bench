@@ -7,7 +7,7 @@ import sys
 from typing import Any
 
 from cyberbench.benchmark_static import build_openrouter_static, write_benchmark_static
-from cyberbench.manifest import BundleManifest
+from cyberbench.manifest import BundleManifest, level_hint_block
 from cyberbench.openrouter import OpenRouterClient, first_message, response_usage
 from cyberbench.runtime.docker import DockerRuntime
 
@@ -116,7 +116,7 @@ class AgentRunner:
             "Find and submit as many valid flags as possible before the cost budget expires."
         )
         if hint:
-            task += f"\n\nSelected hint level {self.level}:\n{hint}"
+            task += f"\n\nHint:\n{hint}"
         return [
             {
                 "role": "system",
@@ -135,9 +135,7 @@ class AgentRunner:
         ]
 
     def _level_hint(self) -> str | None:
-        if self.level is None:
-            return None
-        return self.manifest.levels.get(self.level)
+        return level_hint_block(self.manifest, self.level)
 
     def _handle_tool_call(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         function = tool_call.get("function") or {}

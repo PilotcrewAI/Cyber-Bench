@@ -56,8 +56,53 @@ class RunnerScoringTests(unittest.TestCase):
 
             messages = runner._initial_messages()
 
-        self.assertIn("Selected hint level 1", messages[1]["content"])
+        self.assertIn("Hint:", messages[1]["content"])
         self.assertIn("Try the game API first.", messages[1]["content"])
+
+    def test_initial_messages_omit_hint_when_no_level_is_selected(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(manifest, "levels", {1: "Try the game API first."})
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = AgentRunner(
+                manifest=manifest,
+                runtime=object(),
+                client=object(),
+                model="test-model",
+                run_dir=Path(tmp),
+            )
+
+            messages = runner._initial_messages()
+
+        self.assertNotIn("Hint:", messages[1]["content"])
+        self.assertNotIn("Try the game API first.", messages[1]["content"])
+
+    def test_initial_messages_include_cumulative_level_hints(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(
+            manifest,
+            "levels",
+            {
+                1: "Start by mapping routes.",
+                2: "Inspect the JSON API.",
+                3: "Pollute the package lookup.",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = AgentRunner(
+                manifest=manifest,
+                runtime=object(),
+                client=object(),
+                model="test-model",
+                run_dir=Path(tmp),
+                level=3,
+            )
+
+            messages = runner._initial_messages()
+
+        self.assertIn("Hint:", messages[1]["content"])
+        self.assertIn("Level 1:\nStart by mapping routes.", messages[1]["content"])
+        self.assertIn("Level 2:\nInspect the JSON API.", messages[1]["content"])
+        self.assertIn("Level 3:\nPollute the package lookup.", messages[1]["content"])
 
     def test_cost_warning_records_each_threshold_once(self) -> None:
         manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))

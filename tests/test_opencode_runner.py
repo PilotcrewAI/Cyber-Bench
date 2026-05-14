@@ -53,8 +53,53 @@ class OpenCodeRunnerTests(unittest.TestCase):
 
             doc = runner._targets_doc()
 
-        self.assertIn("Selected Hint Level 2", doc)
+        self.assertIn("## Hint:", doc)
         self.assertIn("Inspect the JSON API routes.", doc)
+
+    def test_targets_doc_omits_hint_when_no_level_is_selected(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(manifest, "levels", {1: "Inspect the JSON API routes."})
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = OpenCodeRunner(
+                manifest=manifest,
+                runtime=DummyRuntime(),
+                model="test/model",
+                run_dir=Path(tmp),
+                openrouter_api_key="test-key",
+            )
+
+            doc = runner._targets_doc()
+
+        self.assertNotIn("## Hint:", doc)
+        self.assertNotIn("Inspect the JSON API routes.", doc)
+
+    def test_targets_doc_includes_cumulative_level_hints(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        object.__setattr__(
+            manifest,
+            "levels",
+            {
+                1: "Start by mapping routes.",
+                2: "Inspect the JSON API.",
+                3: "Pollute the package lookup.",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = OpenCodeRunner(
+                manifest=manifest,
+                runtime=DummyRuntime(),
+                model="test/model",
+                run_dir=Path(tmp),
+                openrouter_api_key="test-key",
+                level=3,
+            )
+
+            doc = runner._targets_doc()
+
+        self.assertIn("## Hint:", doc)
+        self.assertIn("Level 1:\nStart by mapping routes.", doc)
+        self.assertIn("Level 2:\nInspect the JSON API.", doc)
+        self.assertIn("Level 3:\nPollute the package lookup.", doc)
 
     def test_opencode_cost_warning_records_each_threshold_once(self) -> None:
         manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
