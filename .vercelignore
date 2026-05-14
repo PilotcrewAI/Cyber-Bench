@@ -1,0 +1,8 @@
+.venv
+runs
+resources
+__pycache__
+.pytest_cache
+.agents
+memories
+.git

@@ -9,3 +9,4 @@ memories/
 AGENTS.md
 .agents/
 bundles/google-web-10/trials/
+node_modules/

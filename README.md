@@ -105,6 +105,38 @@ Defaults to http://127.0.0.1:8765/ and reads under `runs/`. Choose bundle and ru
 from the dropdowns; **Reload** re-reads files from disk. Optional flags:
 `--port`, `--runs-dir`, `--repo-root` (see `python transcript-viewer/server.py --help`).
 
+### Vercel + S3
+
+Deploy the repo to [Vercel](https://vercel.com/) (static `transcript-viewer/index.html` at `/`, serverless routes
+under `/api/index` and `/api/run`). Copy or sync each run directory into S3 so keys look like
+`runs/<bundle_id>/<run_id>/transcript.jsonl` (same layout as on disk under `runs/`). Optional files in that prefix,
+such as `result.json`, `opencode.stdout.jsonl`, `benchmark_static.json`, and `workspace/...`, are read when present.
+
+Set these environment variables on the Vercel project:
+
+- **`TRANSCRIPT_VIEWER_S3_BUCKET`** — S3 bucket name.
+- **`AWS_REGION`** — region for that bucket (for example `us-east-1`).
+- **`AWS_ACCESS_KEY_ID`** / **`AWS_SECRET_ACCESS_KEY`** — IAM user or access keys with `s3:GetObject` and
+  `s3:ListBucket` on the bucket (scoped with a `ListBucket` prefix condition if you use a non-root prefix).
+- **`AWS_SESSION_TOKEN`** — only if you use temporary credentials.
+
+Optional:
+
+- **`TRANSCRIPT_VIEWER_S3_PREFIX`** — prefix for synced objects (default `runs`). Slashes are normalized; the default matches keys that start with `runs/`.
+
+Example sync with AWS CLI (from the repository root, after a benchmark run):
+
+```bash
+aws s3 sync runs/ "s3://YOUR_BUCKET/runs/" --exclude '*/workspace/**' --exclude '*/docker/**'
+```
+
+Include `workspace/` in the sync if you want the transcript viewer’s **Benchmark context** tab to reconstruct
+`TARGETS.md` / agent files when `benchmark_static.json` is missing:
+
+```bash
+aws s3 sync runs/ "s3://YOUR_BUCKET/runs/"
+```
+
 ## Public Source Archives
 
 Raw public CTF archives are configured in
