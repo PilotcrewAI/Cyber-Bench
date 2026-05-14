@@ -18,6 +18,7 @@ class RunState:
     cost_usd: float = 0.0
     warned_cost_thresholds: set[int] = field(default_factory=set)
     status: str = "running"
+    error: str | None = None
 
 
 class AgentRunner:
@@ -66,17 +67,23 @@ class AgentRunner:
                 break
 
             step += 1
-            response = self.client.chat_completion(
-                model=self.model,
-                messages=messages,
-                tools=TOOLS,
-                temperature=0.2,
-            )
-            usage = response_usage(response)
-            if usage.cost_usd is not None:
-                self.state.cost_usd += usage.cost_usd
-                self._warn_if_cost_threshold_crossed()
-            message = _chat_message(first_message(response))
+            try:
+                response = self.client.chat_completion(
+                    model=self.model,
+                    messages=messages,
+                    tools=TOOLS,
+                    temperature=0.2,
+                )
+                usage = response_usage(response)
+                if usage.cost_usd is not None:
+                    self.state.cost_usd += usage.cost_usd
+                    self._warn_if_cost_threshold_crossed()
+                message = _chat_message(first_message(response))
+            except Exception as exc:
+                self.state.status = "provider_error"
+                self.state.error = str(exc)
+                self._record({"event": "error", "step": step, "error": self.state.error})
+                break
             messages.append(message)
             self._record({"event": "assistant", "step": step, "message": message, "usage": usage.__dict__})
 
@@ -197,7 +204,7 @@ class AgentRunner:
 
     def _result(self) -> dict[str, Any]:
         scored_ids = {service.id for service in self.manifest.scored_services}
-        return {
+        result = {
             "bundle_id": self.manifest.bundle_id,
             "model": self.model,
             "status": self.state.status,
@@ -207,6 +214,9 @@ class AgentRunner:
             "solved_service_count": len(self.state.solved_service_ids),
             "cost_usd": self.state.cost_usd,
         }
+        if self.state.error:
+            result["error"] = self.state.error
+        return result
 
     def _record(self, event: dict[str, Any]) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)

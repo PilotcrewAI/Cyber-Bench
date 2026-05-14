@@ -51,6 +51,42 @@ class DockerRuntime:
     def down(self) -> None:
         self._run(["docker", "compose", "-f", str(self.compose_path), "-p", self.project, "down", "-v"], check=False)
 
+    def persist_helper_logs(self) -> list[Path]:
+        helper_services = [service for service in self.manifest.services if service.role == "helper"]
+        if not helper_services:
+            return []
+
+        log_dir = self.run_dir / "helper-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        for service in helper_services:
+            path = log_dir / f"{service.id}.log"
+            try:
+                completed = self._run(
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        str(self.compose_path),
+                        "-p",
+                        self.project,
+                        "logs",
+                        "--no-color",
+                        service.id,
+                    ],
+                    check=False,
+                )
+                content = completed.stdout
+                if completed.stderr:
+                    content += ("\n" if content and not content.endswith("\n") else "") + completed.stderr
+                if completed.returncode != 0:
+                    content = f"docker compose logs exited with code {completed.returncode}\n\n{content}"
+            except OSError as exc:
+                content = f"failed to collect helper logs: {exc}\n"
+            path.write_text(content)
+            paths.append(path)
+        return paths
+
     def exec_shell(self, command: str, *, timeout_seconds: int, output_limit: int = 20000) -> ShellResult:
         started = time.monotonic()
         try:
@@ -81,8 +117,8 @@ class DockerRuntime:
         except subprocess.TimeoutExpired as exc:
             timed_out = True
             exit_code = 124
-            stdout = exc.stdout or ""
-            stderr = exc.stderr or ""
+            stdout = _to_text(exc.stdout)
+            stderr = _to_text(exc.stderr)
         elapsed = time.monotonic() - started
         return ShellResult(
             command=command,
@@ -170,6 +206,14 @@ def _limit(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[:limit] + f"\n...[truncated {len(value) - limit} chars]"
+
+
+def _to_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def _dump_compose(data: dict[str, object], indent: int = 0) -> str:

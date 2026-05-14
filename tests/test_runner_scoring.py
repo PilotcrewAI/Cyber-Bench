@@ -100,9 +100,9 @@ class RunnerScoringTests(unittest.TestCase):
             messages = runner._initial_messages()
 
         self.assertIn("Hint:", messages[1]["content"])
-        self.assertIn("Level 1:\nStart by mapping routes.", messages[1]["content"])
-        self.assertIn("Level 2:\nInspect the JSON API.", messages[1]["content"])
-        self.assertIn("Level 3:\nPollute the package lookup.", messages[1]["content"])
+        self.assertIn("Hint 1:\nStart by mapping routes.", messages[1]["content"])
+        self.assertIn("Hint 2:\nInspect the JSON API.", messages[1]["content"])
+        self.assertIn("Hint 3:\nPollute the package lookup.", messages[1]["content"])
 
     def test_cost_warning_records_each_threshold_once(self) -> None:
         manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
@@ -126,6 +126,33 @@ class RunnerScoringTests(unittest.TestCase):
             ]
 
         self.assertEqual([event["threshold_percent"] for event in events], [50, 80])
+
+    def test_provider_error_writes_terminal_result(self) -> None:
+        class FailingClient:
+            def chat_completion(self, **kwargs: object) -> dict[str, object]:
+                raise RuntimeError("OpenRouter returned a non-JSON response")
+
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            runner = AgentRunner(
+                manifest=manifest,
+                runtime=object(),
+                client=FailingClient(),
+                model="test-model",
+                run_dir=run_dir,
+            )
+
+            result = runner.run()
+
+            written = json.loads((run_dir / "result.json").read_text())
+            events = [json.loads(line) for line in runner.transcript_path.read_text().splitlines()]
+
+        self.assertEqual(result["status"], "provider_error")
+        self.assertEqual(written["status"], "provider_error")
+        self.assertIn("non-JSON response", written["error"])
+        self.assertEqual(events[-1]["event"], "finish")
+        self.assertTrue(any(event["event"] == "error" for event in events))
 
 
 if __name__ == "__main__":

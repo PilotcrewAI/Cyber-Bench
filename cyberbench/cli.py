@@ -181,6 +181,7 @@ def _run(args: argparse.Namespace) -> int:
         runtime.up()
         result = runner.run()
     finally:
+        runtime.persist_helper_logs()
         if not args.keep_containers:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -227,6 +228,7 @@ def _run_opencode(args: argparse.Namespace) -> int:
         runtime.up()
         result = runner.run()
     finally:
+        runtime.persist_helper_logs()
         if not args.keep_containers:
             runtime.down()
     print(json.dumps(result, indent=2, sort_keys=True))

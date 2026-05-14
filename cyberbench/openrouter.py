@@ -74,7 +74,7 @@ class OpenRouterClient:
         for attempt in range(_RETRIES):
             try:
                 with urllib.request.urlopen(request, timeout=120) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    return _load_json_response(response.read())
             except urllib.error.HTTPError as exc:
                 if exc.code in _RETRYABLE_HTTP and attempt < _RETRIES - 1:
                     _ = exc.read()
@@ -111,6 +111,18 @@ def response_usage(response: dict[str, Any]) -> Usage:
         total_tokens=int(raw.get("total_tokens") or 0),
         cost_usd=float(cost) if cost is not None else None,
     )
+
+
+def _load_json_response(raw_body: bytes) -> dict[str, Any]:
+    body = raw_body.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        snippet = body[:1000] if body else "<empty response>"
+        raise RuntimeError(f"OpenRouter returned a non-JSON response: {exc}; body starts with: {snippet!r}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"OpenRouter returned a JSON response that was not an object: {parsed!r}")
+    return parsed
 
 
 def first_message(response: dict[str, Any]) -> dict[str, Any]:

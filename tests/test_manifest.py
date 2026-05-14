@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 import tempfile
 import unittest
 
@@ -57,6 +58,51 @@ class ManifestTests(unittest.TestCase):
         self.assertIn('XSSBOT_HOST: "gctf-2024-sappy-bot"', compose)
         self.assertIn('NO_CAPTCHA: "1"', compose)
         self.assertIn('\\"8109\\": {\\"host\\": \\"gctf-2024-sappy\\", \\"port\\": 1337}', compose)
+
+    def test_helper_logs_are_persisted_for_helper_services(self) -> None:
+        manifest = load_manifest(Path("bundles/google-web-10/trials/sappy.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = DockerRuntime(manifest, Path(tmp))
+            runtime.prepare()
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+                calls.append(args)
+                return subprocess.CompletedProcess(args, 0, stdout="bot log line\n", stderr="")
+
+            runtime._run = fake_run  # type: ignore[method-assign]
+            paths = runtime.persist_helper_logs()
+
+            self.assertEqual([path.name for path in paths], ["gctf-2024-sappy-bot.log"])
+            self.assertEqual(paths[0].read_text(), "bot log line\n")
+            self.assertIn("logs", calls[0])
+            self.assertIn("gctf-2024-sappy-bot", calls[0])
+
+    def test_timed_out_shell_result_decodes_bytes_output(self) -> None:
+        manifest = load_manifest(Path("bundles/smoke-web/manifest.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = DockerRuntime(manifest, Path(tmp))
+
+            def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                raise subprocess.TimeoutExpired(
+                    cmd=["docker"],
+                    timeout=1,
+                    output=b"partial stdout",
+                    stderr=b"partial stderr",
+                )
+
+            original_run = subprocess.run
+            subprocess.run = fake_run  # type: ignore[assignment]
+            try:
+                result = runtime.exec_shell("sleep 10", timeout_seconds=1)
+            finally:
+                subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertTrue(result.timed_out)
+        self.assertEqual(result.exit_code, 124)
+        self.assertEqual(result.stdout, "partial stdout")
+        self.assertEqual(result.stderr, "partial stderr")
+        json.dumps({"stdout": result.stdout, "stderr": result.stderr})
 
     def test_manifest_loads_hint_levels(self) -> None:
         data = json.loads(Path("bundles/smoke-web/manifest.json").read_text())
