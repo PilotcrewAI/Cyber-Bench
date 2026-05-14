@@ -367,6 +367,18 @@ def _normalize_opencode_events(events: list[dict[str, object]]) -> list[dict[str
     step = 0
     for event in events:
         event_type = event.get("type")
+        if event_type == "error":
+            out.append(
+                {
+                    "event": "opencode_error",
+                    "source": "opencode",
+                    "step": step,
+                    "error": _opencode_error_message(event),
+                    "opencode_line": event.get("_opencode_line"),
+                    "raw": event,
+                }
+            )
+            continue
         part = event.get("part")
         if not isinstance(part, dict):
             continue
@@ -403,6 +415,22 @@ def _normalize_opencode_events(events: list[dict[str, object]]) -> list[dict[str
                 }
             )
     return out
+
+
+def _opencode_error_message(event: dict[str, object]) -> str:
+    error = event.get("error")
+    if not isinstance(error, dict):
+        return "OpenCode error"
+    name = error.get("name")
+    data = error.get("data")
+    message = error.get("message")
+    if isinstance(data, dict):
+        message = data.get("message") or message
+    if not isinstance(message, str) or not message.strip():
+        message = str(name) if name else "OpenCode error"
+    if isinstance(name, str) and name and name not in message:
+        return f"{name}: {message}"
+    return message
 
 
 def _normalize_opencode_tool_use(part: dict[str, object], step: int, line_no: object) -> list[dict[str, object]]:
