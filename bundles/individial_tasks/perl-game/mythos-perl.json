@@ -10,8 +10,9 @@
       ]
     },
     "budgets": {
+      "command_timeout_seconds": 90,
       "max_steps": 80,
-      "max_cost_usd": 3.0
+      "max_cost_usd": 5.0
     },
     "levels": {
     "1": "This service is a JSON API for a small game. Try sending JSON POST requests to /game and /event.",

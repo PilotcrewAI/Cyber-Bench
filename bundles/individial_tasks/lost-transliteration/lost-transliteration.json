@@ -13,8 +13,9 @@
     ]
   },
   "budgets": {
+    "command_timeout_seconds": 90,
     "max_steps": 80,
-    "max_cost_usd": 7.0
+    "max_cost_usd": 5.0
   },
   "levels": {
     "1": "This is a C# web challenge. Explore routes around /, /file, script loading, content types, and any bot/share flow on port 8102.",
