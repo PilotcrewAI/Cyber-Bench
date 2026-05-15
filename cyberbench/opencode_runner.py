@@ -87,7 +87,11 @@ class OpenCodeRunner:
             self.state.status = "solved"
         elif completed["budget_exhausted"]:
             self.state.status = "budget_exhausted"
-        elif completed.get("error") or completed.get("opencode_stop_reason") == "length":
+        elif completed.get("opencode_stop_reason") == "length":
+            self.state.status = "opencode_length_stop"
+            detail = completed.get("error")
+            self.state.error = str(detail) if detail is not None else "opencode stopped: length limit"
+        elif completed.get("error"):
             self.state.status = "opencode_error"
             self.state.error = str(completed["error"])
         elif completed["returncode"] != 0:
@@ -131,16 +135,54 @@ class OpenCodeRunner:
         budget_exhausted = False
         opencode_error = None
         assert process.stdout is not None
-        for line in process.stdout:
-            stdout_lines.append(line)
-            if opencode_error is None:
-                opencode_error = _opencode_error_from_line(line)
-            if _add_opencode_step_usage(usage, line):
-                self._warn_for_opencode_usage(usage)
-                if self._opencode_budget_exhausted(usage):
-                    budget_exhausted = True
-                    _terminate_process(process)
-                    break
+        db_poll_stop = threading.Event()
+        db_cap_totals: list[float] = []
+        poll_thread: threading.Thread | None = None
+        if self.manifest.budgets.max_cost_usd is not None:
+            max_cost = float(self.manifest.budgets.max_cost_usd)
+            db_path = self.opencode_data_dir / "opencode" / "opencode.db"
+
+            def _poll_opencode_db_cost() -> None:
+                while not db_poll_stop.wait(timeout=OPENCODE_DB_COST_POLL_INTERVAL_SEC):
+                    if process.poll() is not None:
+                        return
+                    total = _sum_opencode_session_cost_usd(db_path, self.workspace)
+                    if total is None:
+                        continue
+                    self._warn_for_opencode_usage({"cost_usd": total})
+                    if total >= max_cost:
+                        db_cap_totals.append(total)
+                        _terminate_process(process)
+                        return
+
+            poll_thread = threading.Thread(
+                target=_poll_opencode_db_cost,
+                daemon=True,
+                name="cyberbench-opencode-db-cost",
+            )
+            poll_thread.start()
+        try:
+            for line in process.stdout:
+                stdout_lines.append(line)
+                if opencode_error is None:
+                    opencode_error = _opencode_error_from_line(line)
+                if _add_opencode_step_usage(usage, line):
+                    self._warn_for_opencode_usage(usage)
+                    if self._opencode_budget_exhausted(usage):
+                        budget_exhausted = True
+                        _terminate_process(process)
+                        break
+        finally:
+            db_poll_stop.set()
+            if poll_thread is not None:
+                poll_thread.join(timeout=5.0)
+
+        db_aggregate = _sum_opencode_session_cost_usd(
+            self.opencode_data_dir / "opencode" / "opencode.db", self.workspace
+        )
+        if db_aggregate is not None:
+            usage["cost_usd"] = max(float(usage["cost_usd"]), float(db_aggregate))
+
         remaining_stdout = process.stdout.read()
         if remaining_stdout:
             stdout_lines.append(remaining_stdout)
@@ -168,7 +210,16 @@ class OpenCodeRunner:
                 if self._opencode_budget_exhausted(usage):
                     budget_exhausted = True
             opencode_stop_reason = session_export.get("stop_reason")
+
+        db_aggregate = _sum_opencode_session_cost_usd(
+            self.opencode_data_dir / "opencode" / "opencode.db", self.workspace
+        )
+        if db_aggregate is not None:
+            usage["cost_usd"] = max(float(usage["cost_usd"]), float(db_aggregate))
+
         usage["cost_usd"] = round(float(usage["cost_usd"]), 10)
+        if budget_exhausted or db_cap_totals or self._opencode_budget_exhausted(usage):
+            budget_exhausted = True
         output = {
             "event": "opencode_finish",
             "returncode": returncode,
@@ -752,6 +803,33 @@ def _opencode_session_id_from_stdout(stdout_lines: list[str]) -> str | None:
     return None
 
 
+def _sum_opencode_session_cost_usd(db_path: Path, workspace: Path) -> float | None:
+    """Sum OpenCode ``session.cost`` for this workspace (root + sub-sessions).
+
+    Sub-agents often get their own ``session`` rows; per-line stdout usage may omit
+    their spend. We match like ``_find_opencode_session_id`` plus the per-run parent
+    directory name when OpenCode stores a shorter ``path``.
+    """
+    if not db_path.is_file():
+        return None
+    resolved = str(workspace.resolve())
+    run_token = workspace.resolve().parent.name
+    clauses = ["(directory = ? OR path = ?)"]
+    params: list[str] = [resolved, resolved]
+    if run_token:
+        clauses.append("(directory LIKE '%' || ? || '%' OR path LIKE '%' || ? || '%')")
+        params.extend([run_token, run_token])
+    query = f"SELECT COALESCE(SUM(cost), 0) FROM session WHERE {' OR '.join(clauses)}"
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+            row = conn.execute(query, params).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or row[0] is None:
+        return None
+    return float(row[0])
+
+
 def _find_opencode_session_id(conn: sqlite3.Connection, workspace: Path) -> str | None:
     workspace_path = str(workspace.resolve())
     row = conn.execute(
@@ -777,6 +855,10 @@ def _json_object(raw: str) -> Any:
     except json.JSONDecodeError:
         return raw
 
+
+# Poll OpenCode's SQLite ledger while ``opencode run`` is active so ``max_cost_usd``
+# reflects all sessions, not only step events emitted on the parent stdout stream.
+OPENCODE_DB_COST_POLL_INTERVAL_SEC = 3.0
 
 COST_WARNINGS: tuple[tuple[int, str], ...] = (
     (50, "Cost budget half consumed."),

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from cyberbench.opencode_runner import (
     _add_opencode_step_usage,
     _default_opencode_workspace,
     _summarize_opencode_session,
+    _sum_opencode_session_cost_usd,
 )
 
 
@@ -23,6 +25,35 @@ class OpenCodeRunnerTests(unittest.TestCase):
     def test_opencode_model_uses_openrouter_provider_prefix(self) -> None:
         self.assertEqual(_opencode_model("anthropic/claude-haiku-4.5"), "openrouter/anthropic/claude-haiku-4.5")
         self.assertEqual(_opencode_model("openrouter/openai/gpt-5.4-nano"), "openrouter/openai/gpt-5.4-nano")
+
+    def test_sum_opencode_session_cost_usd_matches_workspace_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "opencode.db"
+            workspace = Path(tmp) / "cyberbench-opencode" / "run-abc123" / "workspace"
+            workspace.mkdir(parents=True)
+            resolved = str(workspace.resolve())
+            token = workspace.resolve().parent.name
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE session (directory TEXT, path TEXT, cost REAL NOT NULL DEFAULT 0)"
+            )
+            conn.execute(
+                "INSERT INTO session (directory, path, cost) VALUES (?, '', 1.25)",
+                (resolved,),
+            )
+            conn.execute(
+                "INSERT INTO session (directory, path, cost) VALUES ('', ?, 2.5)",
+                (f"partial/{token}/workspace",),
+            )
+            conn.execute(
+                "INSERT INTO session (directory, path, cost) VALUES ('', 'unrelated/other', 99.0)",
+            )
+            conn.commit()
+            conn.close()
+
+            total = _sum_opencode_session_cost_usd(db_path, workspace)
+
+        self.assertEqual(total, 3.75)
 
     def test_default_workspace_is_outside_run_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
