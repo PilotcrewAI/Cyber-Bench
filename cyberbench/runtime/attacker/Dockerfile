@@ -12,6 +12,7 @@ RUN apt-get update && \
       jq \
       netcat-openbsd \
       nmap \
+      poppler-utils \
       procps \
       unzip \
       vim-tiny \
