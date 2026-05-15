@@ -190,6 +190,10 @@
       margin: 12px 20px;
       font-size: 0.9rem;
     }
+    #error.parse-warnings {
+      color: #e3b341;
+      white-space: pre-wrap;
+    }
     kbd {
       font-family: inherit;
       font-size: 0.85em;
@@ -479,6 +483,7 @@
 
   function setError(msg) {
     errorEl.textContent = msg;
+    errorEl.className = "";
   }
 
   /** @param {unknown} result @param {string | null} resultPath @param {string} transcriptPath @param {string | null} opencodePath @param {string | null} opencodeSessionPath @param {string} bundle @param {string} run */
@@ -798,6 +803,15 @@
       recs.push(/** @type {TranscriptRecord} */ (row));
     }
     loadEntries(recs);
+    const pw = Array.isArray(data.parse_warnings)
+      ? data.parse_warnings.filter((x) => typeof x === "string")
+      : [];
+    if (pw.length) {
+      errorEl.textContent = pw.join("\n");
+      errorEl.className = "parse-warnings";
+    } else {
+      setError("");
+    }
     renderResultPanel(
       data.result,
       data.result_path != null ? String(data.result_path) : null,

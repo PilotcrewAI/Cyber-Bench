@@ -17,6 +17,34 @@ DEFAULT_REPO_ROOT: Final = VIEWER_ROOT.parent
 BENCHMARK_STATIC_JSON: Final = "benchmark_static.json"
 
 
+def _read_jsonl_dict_lines(
+    path: Path,
+    *,
+    source_label: str,
+    line_meta_key: str | None,
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Parse JSONL; skip lines that are not JSON objects. Each warning names source_label and line no."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for i, line in enumerate(lines, start=1):
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            warnings.append(f"{source_label}: skipped line {i} (invalid JSON)")
+            continue
+        if not isinstance(obj, dict):
+            warnings.append(f"{source_label}: skipped line {i} (not a JSON object)")
+            continue
+        if line_meta_key is not None:
+            obj[line_meta_key] = i
+        out.append(obj)
+    return out, warnings
+
+
 class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
     """GET / serves the UI; /api/index lists runs; /api/run loads transcript + result."""
 
@@ -67,64 +95,38 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             raise FileNotFoundError("run directory not found")
         return candidate
 
-    def _read_transcript_lines(self, run_dir: Path) -> list[dict[str, object]]:
+    def _read_transcript_lines(self, run_dir: Path) -> tuple[list[dict[str, object]], list[str]]:
         tpath = run_dir / "transcript.jsonl"
         if not tpath.is_file():
             raise FileNotFoundError("transcript.jsonl not found")
-        lines = tpath.read_text(encoding="utf-8").splitlines()
-        out: list[dict[str, object]] = []
-        for i, line in enumerate(lines, start=1):
-            s = line.strip()
-            if not s:
-                continue
-            try:
-                obj = json.loads(s)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"transcript.jsonl: invalid JSON on line {i}") from e
-            if not isinstance(obj, dict):
-                raise ValueError(f"transcript.jsonl: line {i} is not a JSON object")
-            out.append(obj)
-        return out
+        out, warnings = _read_jsonl_dict_lines(
+            tpath,
+            source_label="transcript.jsonl",
+            line_meta_key=None,
+        )
+        if not out:
+            raise ValueError("transcript.jsonl: no valid JSON objects")
+        return out, warnings
 
-    def _read_opencode_lines(self, run_dir: Path) -> list[dict[str, object]]:
+    def _read_opencode_lines(self, run_dir: Path) -> tuple[list[dict[str, object]], list[str]]:
         opath = run_dir / "opencode.stdout.jsonl"
         if not opath.is_file():
-            return []
-        lines = opath.read_text(encoding="utf-8").splitlines()
-        out: list[dict[str, object]] = []
-        for i, line in enumerate(lines, start=1):
-            s = line.strip()
-            if not s:
-                continue
-            try:
-                obj = json.loads(s)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"opencode.stdout.jsonl: invalid JSON on line {i}") from e
-            if not isinstance(obj, dict):
-                raise ValueError(f"opencode.stdout.jsonl: line {i} is not a JSON object")
-            obj["_opencode_line"] = i
-            out.append(obj)
-        return out
+            return [], []
+        return _read_jsonl_dict_lines(
+            opath,
+            source_label="opencode.stdout.jsonl",
+            line_meta_key="_opencode_line",
+        )
 
-    def _read_opencode_session_lines(self, run_dir: Path) -> list[dict[str, object]]:
+    def _read_opencode_session_lines(self, run_dir: Path) -> tuple[list[dict[str, object]], list[str]]:
         opath = run_dir / "opencode.session.jsonl"
         if not opath.is_file():
-            return []
-        lines = opath.read_text(encoding="utf-8").splitlines()
-        out: list[dict[str, object]] = []
-        for i, line in enumerate(lines, start=1):
-            s = line.strip()
-            if not s:
-                continue
-            try:
-                obj = json.loads(s)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"opencode.session.jsonl: invalid JSON on line {i}") from e
-            if not isinstance(obj, dict):
-                raise ValueError(f"opencode.session.jsonl: line {i} is not a JSON object")
-            obj["_opencode_session_line"] = i
-            out.append(obj)
-        return out
+            return [], []
+        return _read_jsonl_dict_lines(
+            opath,
+            source_label="opencode.session.jsonl",
+            line_meta_key="_opencode_session_line",
+        )
 
     def _merge_opencode_transcript(
         self,
@@ -331,9 +333,10 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             bundle_q, run_q = bundle_vals[0], run_vals[0]
             try:
                 run_dir = self._safe_run_path(bundle_q, run_q)
-                transcript = self._read_transcript_lines(run_dir)
-                opencode = self._read_opencode_lines(run_dir)
-                opencode_session = self._read_opencode_session_lines(run_dir)
+                transcript, tw = self._read_transcript_lines(run_dir)
+                opencode, ow = self._read_opencode_lines(run_dir)
+                opencode_session, sw = self._read_opencode_session_lines(run_dir)
+                parse_warnings = [*tw, *ow, *sw]
                 transcript = self._merge_opencode_transcript(transcript, opencode, opencode_session)
                 result_obj = self._read_result(run_dir)
                 transcript_path = self._relative_repo(run_dir / "transcript.jsonl")
@@ -369,6 +372,7 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
                         "result_path": result_path,
                         "benchmark_static_path": benchmark_static_path,
                         "benchmark_context": benchmark_context,
+                        "parse_warnings": parse_warnings,
                     }
                 )
             except FileNotFoundError as e:
