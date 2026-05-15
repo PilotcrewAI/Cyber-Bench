@@ -106,6 +106,8 @@ class DockerRuntime:
                     command,
                 ],
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=timeout_seconds,
                 check=False,
@@ -195,7 +197,14 @@ class DockerRuntime:
         return mapping
 
     def _run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, text=True, capture_output=True, check=check)
+        return subprocess.run(
+            args,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=check,
+        )
 
 
 def _repo_root() -> Path:
