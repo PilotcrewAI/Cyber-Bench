@@ -33,15 +33,6 @@ name **`target`** and the manifest-listed ports—not by connecting to each
 service’s Compose hostname on its raw container port unless you do that manually
 inside the attacker.
 
-## Internal network versus your laptop
-
-All of the above listening happens on Docker’s **`bench`** network. The compose
-generator does **not** add `ports:` mappings for those target ports onto the
-host, so **`curl http://127.0.0.1:8101` on the host does not reach the benchmark
-by default**. To reproduce the agent’s view from the host you would add explicit
-`ports` in the generated file, or run commands inside the `attacker` container
-(e.g. `curl http://target:8101`).
-
 ## Diagram: services and traffic
 
 ```mermaid

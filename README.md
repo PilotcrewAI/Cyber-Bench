@@ -1,9 +1,24 @@
 # Cyber-Bench
 
+CyberExplorer-style environment: fixed curated bundles, multiple exposed web
+services, scored CTF targets, and LLM agents through
+OpenRouter under cost budgets.
 
-CyberExplorer-style environment: fixed curated bundles,
-multiple exposed web services, scored CTF targets mixed with benign decoys, and
-LLM agents through OpenRouter under cost budgets.
+## Prerequisites
+
+
+- **Docker Engine** and the **Docker Compose V2 plugin** — `docker` and
+  `docker compose` must work for `run` and `run-opencode`. Install from your OS
+  or follow [Docker’s install guide for Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+
+**Only for `run-opencode`:**
+
+- **Node.js** and **npm** on the host, then `npm i -g opencode-ai@latest` so the
+  `opencode` command is available (use `sudo` for `-g` if your Node install is
+  system-wide).
+
+**Useful extras:** `git` (clone), `jq` (inspect `result.json` under `runs/`).
+
 
 ## Configuration
 
@@ -115,47 +130,67 @@ from the dropdowns; **Reload** re-reads files from disk. Optional flags:
 
 Raw public CTF archives are configured in
 `sources/public_web_ctf_sources.json` and download into
-`resources/ctf-archives/`:
+`resources/ctf-archives/`. The current five-task web bundle needs Google CTF,
+DownUnderCTF 2024, and HKCERT CTF sources:
 
 ```bash
 python scripts/download_sources.py --source-id google-ctf
-python scripts/scan_ctf_services.py --json
+python scripts/download_sources.py --source-id downunderctf-2024
+python scripts/download_sources.py --source-id hkcert-ctf
 ```
 
-The scanner only finds candidate Docker-backed web services. A task still needs
-manual curation before it enters a scored bundle: confirm license/provenance,
-deduplicate against CyberExplorer's task set, normalize the flag where feasible,
-and add the service to a bundle manifest.
+## Current Five-Task Web Bundle
 
-## Curated Bundle
+`bundles/web-5/manifest.json` is the current report/calibration bundle. It runs
+five scored web CTF services together behind the shared `target` gateway:
 
-`bundles/google-web-10/manifest.json` is the first fixed real-web bundle. It
-contains exactly 10 scored Google CTF web services and 3 benign web decoys.
-It builds local images from the public Google CTF source archive because the
-upstream prebuilt Google Artifact Registry images are permission-gated. Download
-the source archive before validating, preparing, or running it:
+| Port | Service | Source |
+| ---- | ------- | ------ |
+| 8102 | `gctf-2025-lost-transliteration` | Google CTF 2025 |
+| 8103 | `gctf-2025-mythos-perl` | Google CTF 2025 |
+| 8111 | `ductf-2024-co2` | DownUnderCTF 2024 |
+| 8112 | `ductf-2024-sniffy` | DownUnderCTF 2024 |
+| 8113 | `hkcert-2024-webpage-to-pdf-1` | HKCERT CTF 2024 |
+
+After downloading the required public source archives, validate and prepare the
+bundle:
 
 ```bash
-python scripts/download_sources.py --source-id google-ctf
-python -m cyberbench.cli validate-bundle bundles/google-web-10/manifest.json --strict
-COMPOSE=$(python -m cyberbench.cli prepare-run bundles/google-web-10/manifest.json)
+python -m cyberbench.cli validate-bundle bundles/web-5/manifest.json --strict
+COMPOSE=$(python -m cyberbench.cli prepare-run bundles/web-5/manifest.json)
 docker compose -f "$COMPOSE" build
+```
+
+Run the current bundle with or without cumulative hint levels. Level 0 means omit
+`--level`; level 4 exposes all hints from levels 1 through 4:
+
+```bash
+python -m cyberbench.cli run bundles/web-5/manifest.json \
+  --model openai/gpt-5.5 --level 4
+
+python -m cyberbench.cli run-opencode bundles/web-5/manifest.json \
+  --model openai/gpt-5.5 --level 4
 ```
 
 `prepare-run` prints the path to the generated `compose.yml` under
 `runs/<bundle_id>/<local_timestamp>_prepare/` (same local `YYYYMMDD_HHMMSS` as `run`).
 
+The original upstream image references or URLs are kept in manifest `source`
+metadata for provenance. Raw source archives stay under ignored
+`resources/ctf-archives/`.
+
+
 The original upstream image references are still kept in the manifest `source`
 metadata for provenance.
 
-Run the curated bundle (each invocation creates a new run folder under `runs/<bundle_id>/`):
+Run the curated bundle with run and run-opencode (each invocation creates a new run folder under `runs/<bundle_id>/`):
 
 ```bash
-python -m cyberbench.cli run bundles/google-web-10/manifest.json \
+python -m cyberbench.cli run bundles/individial_tasks/lost-transliteration/lost-transliteration.json \
   --model anthropic/claude-haiku-4.5
 
-python -m cyberbench.cli run bundles/google-web-10/manifest.json \
-  --model openai/gpt-5.4-nano
+python -m cyberbench.cli run-opencode bundles/individial_tasks/lost-transliteration/lost-transliteration.json \
+  --model anthropic/claude-haiku-4.5
 ```
 
 ## Assets
