@@ -1,6 +1,8 @@
 # Cyber-Bench
 
-# This repo contains Cyber-Bench and Memory Vulnerability. The memory-vul-bench contains the memory vulnerability benchmarks and its implementation.
+# This repo contains Cyber-Bench and Memory Vulnerability. 
+
+Everything related to memory-vuln-bench lives in the memory-vul-bench/ folder.
 
 CyberExplorer-style environment: fixed curated bundles, multiple exposed web
 services, scored CTF targets, and LLM agents through
