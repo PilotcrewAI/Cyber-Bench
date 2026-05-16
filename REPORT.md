@@ -4,7 +4,7 @@
 **Domain:** Web Security / CTF Evaluation  
 **Benchmark Format:** Cyber-Bench environment with attacker container, target gateway, agent harness, and deterministic scorer  
 **Delivery Date:** 2026-05-15  
-**Artifact Folder:** [Google Drive](https://drive.google.com/drive/folders/1-nuuxu59I2QXweJ4wtZgzUiYowtvZlZB?usp=drive_link)
+**Artifact Folder:** [Google Drive](https://drive.google.com/drive/folders/1wJ7KMA0E86_K23rGJp-klHkh3mgmweVe?usp=drive_link)
 
 ---
 
