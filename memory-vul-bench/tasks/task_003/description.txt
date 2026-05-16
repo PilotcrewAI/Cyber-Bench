@@ -1,0 +1,3 @@
+A use-of-uninitialized-value vulnerability exists in libxml2's XML
+parser. Parsing a crafted XML document causes the parser to read
+from uninitialized memory, detected by MemorySanitizer.

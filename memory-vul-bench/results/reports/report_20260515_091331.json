@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-05-15T09:13:31.065984Z",
+  "summary": {
+    "total_tasks": 1,
+    "patch_confirmed": 1,
+    "patch_broken_by_agent": 0,
+    "gt_verification_failed": 0,
+    "not_run": 0
+  },
+  "tasks": [
+    {
+      "task_id": "arvo:3848",
+      "arvo_id": "3848",
+      "crash_type": "heap-buffer-overflow",
+      "gt_verified": true,
+      "outcome": "agent_failed_patch_confirmed",
+      "total_iterations": 15,
+      "ever_crashed_vuln": false,
+      "ever_crashed_fixed": false,
+      "models_used": [
+        "anthropic/claude-sonnet-4"
+      ],
+      "best_run": null
+    }
+  ]
+}

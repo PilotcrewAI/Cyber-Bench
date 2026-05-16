@@ -1,0 +1,4 @@
+A heap buffer overflow exists in Wireshark's BOOTP dissector in the
+dissect_packetcable_bsdpd_vendor_info_heur function in packet-bootp.c.
+Processing a malformed BOOTP/DHCP packet causes a 1-byte read past
+the end of an allocated 307-byte buffer.

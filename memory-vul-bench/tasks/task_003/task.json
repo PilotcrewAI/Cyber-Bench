@@ -1,0 +1,6 @@
+{
+  "task_id": "arvo:1076",
+  "arvo_id": "1076",
+  "program": "libxml2",
+  "crash_type": "Use-of-uninitialized-value"
+}
