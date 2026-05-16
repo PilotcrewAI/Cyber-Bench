@@ -1,0 +1,6 @@
+{
+  "task_id": "arvo:1972",
+  "arvo_id": "1972",
+  "program": "libxml2",
+  "crash_type": "Stack-buffer-overflow WRITE"
+}

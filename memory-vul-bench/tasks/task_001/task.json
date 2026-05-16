@@ -1,0 +1,6 @@
+{
+  "task_id": "arvo:1273",
+  "arvo_id": "1273",
+  "program": "wireshark",
+  "crash_type": "Heap-buffer-overflow READ 1"
+}
