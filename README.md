@@ -1,6 +1,6 @@
 # Cyber-Bench
 
-# This repo contains Cyber-Bench and Memory Vulnerability. 
+This repo contains Cyber-Bench and Memory Vulnerability benchmarks.
 
 Everything related to memory-vuln-bench lives in the memory-vul-bench/ folder.
 
