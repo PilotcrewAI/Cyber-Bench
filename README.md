@@ -4,18 +4,24 @@ This repo contains Cyber-Bench and Memory Vulnerability benchmarks.
 
 Everything related to memory-vuln-bench lives in the memory-vul-bench/ folder.
 
-CyberExplorer-style environment: fixed curated bundles, multiple exposed web
-services, scored CTF targets, and LLM agents through
-OpenRouter under cost budgets.
+CyberExplorer-style environment: multiple exposed web services, scored CTF
+targets, and LLM agents under cost budgets.
+
+**Web CTF task development uses Harbor / Terminal-Bench.** Checked task
+directories live under `harbor/tasks/` and are the canonical format for defining,
+calibrating, and running the current Web-5 benchmark set. The legacy manifest
+runner (`bundles/*/manifest.json`, `cyberbench.cli run`) remains available as a
+fallback; see [Legacy manifest runner](#legacy-manifest-runner-fallback).
 
 ## Prerequisites
 
 
-- **Docker Engine** and the **Docker Compose V2 plugin** — `docker` and
-  `docker compose` must work for `run` and `run-opencode`. Install from your OS
-  or follow [Docker’s install guide for Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+- **Docker Engine** and the **Docker Compose V2 plugin** — required for Harbor
+  task environments and the legacy manifest runner. Install from your OS or
+  follow [Docker’s install guide for Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+- **Harbor CLI** — required for the canonical task workflow (`harbor run ...`).
 
-**Only for `run-opencode`:**
+**Only for the legacy `run-opencode` fallback:**
 
 - **Node.js** and **npm** on the host, then `npm i -g opencode-ai@latest` so the
   `opencode` command is available (use `sudo` for `-g` if your Node install is
@@ -25,6 +31,9 @@ OpenRouter under cost budgets.
 
 
 ## Configuration
+
+Used by the legacy manifest runner and OpenCode fallback. Harbor agent
+configuration is handled by Harbor itself.
 
 Create `.env` with:
 
@@ -40,136 +49,72 @@ CYBERBENCH_MODEL=anthropic/claude-sonnet-4.5
 
 If neither is set, Cyber-Bench falls back to `anthropic/claude-sonnet-4.5`.
 
-## Commands
+## Harbor / Terminal-Bench tasks
 
-Activate the local environment first:
+Checked task directories under `harbor/tasks/` are the **canonical** Web-5
+benchmark format. Edit them directly when changing instructions, Compose
+services, verifiers, or oracle solutions. Run them with Harbor; artifacts go
+under `jobs/`.
 
-```bash
-source .venv/bin/activate
-```
+Each task uses Harbor's `main` terminal container (based on
+`cyberbench/attacker:latest`), the shared `target` gateway, and file-based
+grading via `/app/flags.txt`. These tasks do not read or modify
+`memory-vul-bench/`.
 
-General CLI checks:
+| Harbor task | Scope |
+| ----------- | ----- |
+| `harbor/tasks/web-5/` | All five services, no hints |
+| `harbor/tasks/web-5-l1/` … `web-5-l4/` | All five services, cumulative hints through level *N* |
+| `harbor/tasks/co2/` | CO2 only |
+| `harbor/tasks/lost-transliteration/` | Lost Transliteration only |
+| `harbor/tasks/mythos-perl/` | Mythos Perl only |
+| `harbor/tasks/sniffy/` | Sniffy only |
+| `harbor/tasks/webpage-to-pdf-1/` | Webpage to PDF 1 only |
 
-```bash
-python -m cyberbench.cli validate-config
-python -m cyberbench.cli check-openrouter
-python -m cyberbench.cli check-openrouter --model openai/gpt-5-codex
-python -m cyberbench.cli validate-bundle bundles/smoke-web/manifest.json
-python -m cyberbench.cli prepare-run bundles/smoke-web/manifest.json
-python -m cyberbench.cli run bundles/smoke-web/manifest.json
-python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json
-python -m cyberbench.cli export-harbor-tasks --force
-```
+There is no `web-5-l0`; use `harbor/tasks/web-5/` for no-hint runs. Hint levels
+are separate directories because Harbor has no native hint-level field—each
+`web-5-lN/instruction.md` bakes in the cumulative hint text directly.
 
-`run` requires Docker with the Compose plugin. It starts a target gateway,
-multiple web services, and an attacker container, then gives the model only two
-tools: shell execution inside the attacker container and structured flag
-submission. The default attacker image is built from `python:3.12` with common
-web/CTF tools installed, including `curl`, `wget`, `nmap`, `netcat`, `dnsutils`,
-`jq`, and `git`.
+The shared `web-5` environment reaches five services through
+`http://target:8102`, `http://target:8103`, `http://target:8111`,
+`http://target:8112`, and `http://target:8113`. Individual tasks include only
+their own scored service.
 
-Use OpenRouter model IDs directly:
-
-```bash
-python -m cyberbench.cli run bundles/smoke-web/manifest.json --model anthropic/claude-haiku-4.5
-python -m cyberbench.cli run bundles/smoke-web/manifest.json --model openai/gpt-5.4-nano
-```
-
-### OpenCode backend
-
-`run-opencode` uses the `opencode` CLI as the coding agent while
-keeping the benchmark manifest as the source of truth for visible targets. It
-starts a Docker target network, creates an empty execution workspace under
-`/tmp/cyberbench-opencode/`, mounts that workspace into the attacker container,
-writes two helper commands into it, and runs opencode from that isolated
-directory:
-
-- `./bench_shell '<command>'` executes inside the attacker container.
-- `./submit_flag '<flag>'` submits to the Cyber-Bench scorer.
-
-The OpenCode subprocess uses a clean per-run home/config directory, disables
-project config discovery, and denies plain host bash commands except for the two
-helpers above. This prevents repo-level `AGENTS.md` / `CLAUDE.md` files and
-host-only commands from contaminating benchmark runs.
-
-Install opencode separately before using this backend:
-
-```bash
-npm i -g opencode-ai@latest
-```
-
-Then run:
-
-```bash
-python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json \
-  --model anthropic/claude-haiku-4.5
-```
-
-The OpenCode model id is passed as `openrouter/<model>`, so the same
-OpenRouter model IDs used by the API-shell runner should be used here.
-`manifest.target.ports` controls the target URLs shown to opencode, for example
-`http://target:8081/`; challenge source directories are not mounted into the
-opencode workspace.
-
-Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`.  
-
-```bash
-jq . runs/<bundle_id>/<run-folder>/result.json
-tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
-```
-
-### Harbor / Terminal-Bench export
-
-Export the verified Web-5 task set to Harbor task format:
-
-```bash
-python -m cyberbench.cli export-harbor-tasks --force
-```
-
-By default this writes the shared task plus the five verified individual tasks:
-
-| Harbor task | Source manifest |
-| ----------- | --------------- |
-| `harbor/tasks/web-5/` | `bundles/web-5/manifest.json` |
-| `harbor/tasks/co2/` | `bundles/individial_tasks/co2/co2.json` |
-| `harbor/tasks/lost-transliteration/` | `bundles/individial_tasks/lost-transliteration/lost-transliteration.json` |
-| `harbor/tasks/mythos-perl/` | `bundles/individial_tasks/perl-game/mythos-perl.json` |
-| `harbor/tasks/sniffy/` | `bundles/individial_tasks/sniffy/sniffy.json` |
-| `harbor/tasks/webpage-to-pdf-1/` | `bundles/individial_tasks/webpage-to-pdf-1/webpage-to-pdf-1.json` |
-
-The exporter does not read or modify `memory-vul-bench/`. Each generated task
-keeps the Cyber-Bench target gateway, uses Harbor's `main` terminal container,
-and grades recovered flags written one per line to `/app/flags.txt`. Harbor run
-artifacts are written under `jobs/`.
-
-The Web-5 Harbor compose file is the shared environment: `main` reaches the
-five services through `http://target:8102`, `http://target:8103`,
-`http://target:8111`, `http://target:8112`, and `http://target:8113`.
-Each individual Harbor task contains only its own scored service. Explicit
-manifest arguments are available for future experiments, but the checked default
-remains limited to the Web-5 set because `REPORT.md` and previous `runs/`
-artifacts currently support those tasks.
-
-If the attacker base image is not already present locally, build it first:
+Build the attacker base image once if it is not already present locally:
 
 ```bash
 docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
 ```
 
-Check the generated Web-5 task contract with Harbor's oracle agent:
+Check task contracts with Harbor's oracle agent:
 
 ```bash
 harbor run -p harbor/tasks/web-5 -a oracle
-```
-
-Check an individual task the same way:
-
-```bash
+harbor run -p harbor/tasks/web-5-l4 -a oracle
 harbor run -p harbor/tasks/co2 -a oracle
 ```
 
-This validates the Harbor environment and verifier wiring; it is not a model
-capability run because the oracle uses `solution/solve.sh`.
+Oracle runs validate environment and verifier wiring via `solution/solve.sh`;
+they do not measure model capability.
+
+See `docs/architecture.md` for container topology and grading flow diagrams.
+
+## Current Web-5 task set
+
+| Port | Service | Source |
+| ---- | ------- | ------ |
+| 8102 | `gctf-2025-lost-transliteration` | Google CTF 2025 |
+| 8103 | `gctf-2025-mythos-perl` | Google CTF 2025 |
+| 8111 | `ductf-2024-co2` | DownUnderCTF 2024 |
+| 8112 | `ductf-2024-sniffy` | DownUnderCTF 2024 |
+| 8113 | `hkcert-2024-webpage-to-pdf-1` | HKCERT CTF 2024 |
+
+After downloading the required public source archives (see below), build the
+challenge images referenced by each task's `environment/docker-compose.yaml`,
+then run oracle checks before model calibration.
+
+Add new Harbor tasks under `harbor/tasks/` once the service has been validated
+in isolation and documented in `REPORT.md`.
 
 ## Transcript viewer
 
@@ -188,7 +133,7 @@ from the dropdowns; **Reload** re-reads files from disk. Optional flags:
 
 Raw public CTF archives are configured in
 `sources/public_web_ctf_sources.json` and download into
-`resources/ctf-archives/`. The current five-task web bundle needs Google CTF,
+`resources/ctf-archives/`. The current Web-5 Harbor tasks need Google CTF,
 DownUnderCTF 2024, and HKCERT CTF sources:
 
 ```bash
@@ -197,59 +142,57 @@ python scripts/download_sources.py --source-id downunderctf-2024
 python scripts/download_sources.py --source-id hkcert-ctf
 ```
 
-## Current Five-Task Web Bundle
+## Legacy manifest runner (fallback)
 
-`bundles/web-5/manifest.json` is the current report/calibration bundle. It runs
-five scored web CTF services together behind the shared `target` gateway:
+`bundles/*/manifest.json` is the older Cyber-Bench task format. The CLI can
+still validate manifests, generate per-run Compose files, and drive the
+in-process API runner or OpenCode backend. **Prefer Harbor for new task work.**
 
-| Port | Service | Source |
-| ---- | ------- | ------ |
-| 8102 | `gctf-2025-lost-transliteration` | Google CTF 2025 |
-| 8103 | `gctf-2025-mythos-perl` | Google CTF 2025 |
-| 8111 | `ductf-2024-co2` | DownUnderCTF 2024 |
-| 8112 | `ductf-2024-sniffy` | DownUnderCTF 2024 |
-| 8113 | `hkcert-2024-webpage-to-pdf-1` | HKCERT CTF 2024 |
+The container topology matches Harbor (`target` gateway + challenge services).
+Differences: the agent service is named `attacker` (host `docker compose exec`),
+scoring uses the `submit_flag` tool instead of `/app/flags.txt`, and artifacts
+land under `runs/` instead of `jobs/`.
 
-After downloading the required public source archives, validate and prepare the
-bundle:
+Activate the local environment first:
 
 ```bash
-python -m cyberbench.cli validate-bundle bundles/web-5/manifest.json --strict
-COMPOSE=$(python -m cyberbench.cli prepare-run bundles/web-5/manifest.json)
-docker compose -f "$COMPOSE" build
+source .venv/bin/activate
 ```
 
-Run the current bundle with or without cumulative hint levels. Level 0 means omit
-`--level`; level 4 exposes all hints from levels 1 through 4:
+General CLI checks:
 
 ```bash
-python -m cyberbench.cli run bundles/web-5/manifest.json \
-  --model openai/gpt-5.5 --level 4
-
-python -m cyberbench.cli run-opencode bundles/web-5/manifest.json \
-  --model openai/gpt-5.5 --level 4
+python -m cyberbench.cli validate-config
+python -m cyberbench.cli check-openrouter
+python -m cyberbench.cli validate-bundle bundles/web-5/manifest.json
+python -m cyberbench.cli prepare-run bundles/web-5/manifest.json
+python -m cyberbench.cli run bundles/web-5/manifest.json --model openai/gpt-5.5 --level 4
+python -m cyberbench.cli run-opencode bundles/web-5/manifest.json --model openai/gpt-5.5 --level 4
 ```
 
-`prepare-run` prints the path to the generated `compose.yml` under
-`runs/<bundle_id>/<local_timestamp>_prepare/` (same local `YYYYMMDD_HHMMSS` as `run`).
+`run` requires Docker with the Compose plugin. It gives the model two tools:
+shell execution inside the attacker container and structured flag submission.
+The default attacker image is the same one Harbor's `main` container uses.
 
-The original upstream image references or URLs are kept in manifest `source`
-metadata for provenance. Raw source archives stay under ignored
-`resources/ctf-archives/`.
+For OpenCode runs, install `opencode` separately (`npm i -g opencode-ai@latest`).
+OpenCode uses `./bench_shell` and `./submit_flag` helpers in an isolated
+workspace under `/tmp/cyberbench-opencode/`. See `docs/architecture.md` for
+details.
 
-Run an individual calibrated task when needed. Each invocation creates a new run
-folder under `runs/<bundle_id>/`:
+Run artifacts live under `runs/<bundle_id>/<local_timestamp>_<model_slug>/`:
 
 ```bash
-python -m cyberbench.cli run bundles/individial_tasks/lost-transliteration/lost-transliteration.json \
-  --model anthropic/claude-haiku-4.5
-
-python -m cyberbench.cli run-opencode bundles/individial_tasks/lost-transliteration/lost-transliteration.json \
-  --model anthropic/claude-haiku-4.5
+jq . runs/<bundle_id>/<run-folder>/result.json
+tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 ```
+
+Legacy manifests under `bundles/web-5/` and `bundles/individial_tasks/` mirror
+the checked Harbor tasks and are kept for transcript viewer integration and
+historical comparison against existing `runs/` artifacts.
 
 ## Assets
 
 Raw public CTF downloads belong under ignored `resources/ctf-archives/`.
-Committed files should be normalized manifests, import scripts, runner code, and
-documentation only.
+Committed files should be Harbor task directories under `harbor/tasks/`, runner
+code, import scripts, and documentation. Legacy manifests under `bundles/` are
+kept for the fallback runner only.
