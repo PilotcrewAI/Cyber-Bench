@@ -13,7 +13,14 @@ from cyberbench.runtime.docker import DEFAULT_ATTACKER_IMAGE
 
 
 DEFAULT_OUTPUT_ROOT = Path("harbor/tasks")
-DEFAULT_HARBOR_MANIFESTS = (Path("bundles/web-5/manifest.json"),)
+DEFAULT_HARBOR_MANIFESTS = (
+    Path("bundles/web-5/manifest.json"),
+    Path("bundles/individial_tasks/co2/co2.json"),
+    Path("bundles/individial_tasks/lost-transliteration/lost-transliteration.json"),
+    Path("bundles/individial_tasks/perl-game/mythos-perl.json"),
+    Path("bundles/individial_tasks/sniffy/sniffy.json"),
+    Path("bundles/individial_tasks/webpage-to-pdf-1/webpage-to-pdf-1.json"),
+)
 
 
 def export_harbor_tasks(
@@ -78,6 +85,8 @@ def _task_slug(manifest_path: Path, repo_root: Path, manifest: BundleManifest) -
     try:
         relative = manifest_path.relative_to(repo_root / "bundles")
     except ValueError:
+        return _slug(manifest.bundle_id)
+    if relative.parts[:1] == ("individial_tasks",):
         return _slug(manifest.bundle_id)
     if relative.name == "manifest.json":
         parts = relative.parts[:-1]
@@ -337,7 +346,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "manifests",
         nargs="*",
         type=Path,
-        help="Cyber-Bench manifest JSON paths. Defaults to the verified Web-5 combined manifest.",
+        help="Cyber-Bench manifest JSON paths. Defaults to the verified Web-5 shared and individual manifests.",
     )
     parser.add_argument(
         "--output-root",

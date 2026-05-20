@@ -58,6 +58,7 @@ python -m cyberbench.cli validate-bundle bundles/smoke-web/manifest.json
 python -m cyberbench.cli prepare-run bundles/smoke-web/manifest.json
 python -m cyberbench.cli run bundles/smoke-web/manifest.json
 python -m cyberbench.cli run-opencode bundles/smoke-web/manifest.json
+python -m cyberbench.cli export-harbor-tasks --force
 ```
 
 `run` requires Docker with the Compose plugin. It starts a target gateway,
@@ -119,22 +120,35 @@ tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 
 ### Harbor / Terminal-Bench export
 
-Export the verified shared Web-5 environment to Harbor task format:
+Export the verified Web-5 task set to Harbor task format:
 
 ```bash
 python -m cyberbench.cli export-harbor-tasks --force
 ```
 
-By default this writes only `harbor/tasks/web-5/` from
-`bundles/web-5/manifest.json`. It does not read or modify `memory-vul-bench/`.
-The generated task keeps the Cyber-Bench target gateway and all five Web-5
-service sidecars, uses Harbor's `main` terminal container, and grades recovered
-flags written one per line to `/app/flags.txt`. Harbor run artifacts are written
-under `jobs/`.
+By default this writes the shared task plus the five verified individual tasks:
+
+| Harbor task | Source manifest |
+| ----------- | --------------- |
+| `harbor/tasks/web-5/` | `bundles/web-5/manifest.json` |
+| `harbor/tasks/co2/` | `bundles/individial_tasks/co2/co2.json` |
+| `harbor/tasks/lost-transliteration/` | `bundles/individial_tasks/lost-transliteration/lost-transliteration.json` |
+| `harbor/tasks/mythos-perl/` | `bundles/individial_tasks/perl-game/mythos-perl.json` |
+| `harbor/tasks/sniffy/` | `bundles/individial_tasks/sniffy/sniffy.json` |
+| `harbor/tasks/webpage-to-pdf-1/` | `bundles/individial_tasks/webpage-to-pdf-1/webpage-to-pdf-1.json` |
+
+The exporter does not read or modify `memory-vul-bench/`. Each generated task
+keeps the Cyber-Bench target gateway, uses Harbor's `main` terminal container,
+and grades recovered flags written one per line to `/app/flags.txt`. Harbor run
+artifacts are written under `jobs/`.
 
 The Web-5 Harbor compose file is the shared environment: `main` reaches the
 five services through `http://target:8102`, `http://target:8103`,
 `http://target:8111`, `http://target:8112`, and `http://target:8113`.
+Each individual Harbor task contains only its own scored service. Explicit
+manifest arguments are available for future experiments, but the checked default
+remains limited to the Web-5 set because `REPORT.md` and previous `runs/`
+artifacts currently support those tasks.
 
 If the attacker base image is not already present locally, build it first:
 
@@ -142,11 +156,20 @@ If the attacker base image is not already present locally, build it first:
 docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
 ```
 
-Smoke-check the generated Web-5 task with Harbor's oracle agent:
+Check the generated Web-5 task contract with Harbor's oracle agent:
 
 ```bash
 harbor run -p harbor/tasks/web-5 -a oracle
 ```
+
+Check an individual task the same way:
+
+```bash
+harbor run -p harbor/tasks/co2 -a oracle
+```
+
+This validates the Harbor environment and verifier wiring; it is not a model
+capability run because the oracle uses `solution/solve.sh`.
 
 ## Transcript viewer
 
@@ -214,11 +237,8 @@ The original upstream image references or URLs are kept in manifest `source`
 metadata for provenance. Raw source archives stay under ignored
 `resources/ctf-archives/`.
 
-
-The original upstream image references are still kept in the manifest `source`
-metadata for provenance.
-
-Run the curated bundle with run and run-opencode (each invocation creates a new run folder under `runs/<bundle_id>/`):
+Run an individual calibrated task when needed. Each invocation creates a new run
+folder under `runs/<bundle_id>/`:
 
 ```bash
 python -m cyberbench.cli run bundles/individial_tasks/lost-transliteration/lost-transliteration.json \

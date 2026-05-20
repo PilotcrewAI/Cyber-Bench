@@ -45,7 +45,14 @@ def test_export_uses_relative_build_context(tmp_path: Path) -> None:
 
 
 def test_default_harbor_export_scope_is_verified_web_5() -> None:
-    assert default_harbor_manifests() == [Path("bundles/web-5/manifest.json")]
+    assert default_harbor_manifests() == [
+        Path("bundles/web-5/manifest.json"),
+        Path("bundles/individial_tasks/co2/co2.json"),
+        Path("bundles/individial_tasks/lost-transliteration/lost-transliteration.json"),
+        Path("bundles/individial_tasks/perl-game/mythos-perl.json"),
+        Path("bundles/individial_tasks/sniffy/sniffy.json"),
+        Path("bundles/individial_tasks/webpage-to-pdf-1/webpage-to-pdf-1.json"),
+    ]
 
 
 def test_web_5_export_has_shared_five_service_environment(tmp_path: Path) -> None:
@@ -63,3 +70,26 @@ def test_web_5_export_has_shared_five_service_environment(tmp_path: Path) -> Non
     assert "hkcert-2024-webpage-to-pdf-1:" in compose
     for port in ("8102", "8103", "8111", "8112", "8113"):
         assert port in compose
+
+
+def test_default_export_adds_clean_individual_task_dirs(tmp_path: Path) -> None:
+    task_dirs = export_harbor_tasks(
+        default_harbor_manifests(),
+        output_root=tmp_path,
+    )
+
+    assert [path.name for path in task_dirs] == [
+        "web-5",
+        "co2",
+        "lost-transliteration",
+        "mythos-perl",
+        "sniffy",
+        "webpage-to-pdf-1",
+    ]
+
+    co2_compose = (tmp_path / "co2/environment/docker-compose.yaml").read_text()
+    assert "ductf-2024-co2:" in co2_compose
+    assert "ductf-2024-sniffy:" not in co2_compose
+
+    mythos_instruction = (tmp_path / "mythos-perl/instruction.md").read_text()
+    assert "http://target:8103" in mythos_instruction
