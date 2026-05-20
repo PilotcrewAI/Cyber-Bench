@@ -63,17 +63,16 @@ grading via `/app/flags.txt`. These tasks do not read or modify
 
 | Harbor task | Scope |
 | ----------- | ----- |
-| `harbor/tasks/web-5/` | All five services, no hints |
-| `harbor/tasks/web-5-l1/` … `web-5-l4/` | All five services, cumulative hints through level *N* |
-| `harbor/tasks/co2/` | CO2 only |
-| `harbor/tasks/lost-transliteration/` | Lost Transliteration only |
-| `harbor/tasks/mythos-perl/` | Mythos Perl only |
-| `harbor/tasks/sniffy/` | Sniffy only |
-| `harbor/tasks/webpage-to-pdf-1/` | Webpage to PDF 1 only |
+| `harbor/tasks/shared/web-5/l0/` … `l4/` | All five services, no hints through cumulative level 4 |
+| `harbor/tasks/individual/co2/l0/` … `l4/` | CO2 only, no hints through cumulative level 4 |
+| `harbor/tasks/individual/lost-transliteration/l0/` … `l4/` | Lost Transliteration only, no hints through cumulative level 4 |
+| `harbor/tasks/individual/mythos-perl/l0/` … `l4/` | Mythos Perl only, no hints through cumulative level 4 |
+| `harbor/tasks/individual/sniffy/l0/` … `l4/` | Sniffy only, no hints through cumulative level 4 |
+| `harbor/tasks/individual/webpage-to-pdf-1/l0/` … `l4/` | Webpage to PDF 1 only, no hints through cumulative level 4 |
 
-There is no `web-5-l0`; use `harbor/tasks/web-5/` for no-hint runs. Hint levels
-are separate directories because Harbor has no native hint-level field—each
-`web-5-lN/instruction.md` bakes in the cumulative hint text directly.
+Shared and individual tasks both use explicit `l0` through `l4` directories.
+Hint levels are separate directories because Harbor has no native hint-level
+field; each `lN/instruction.md` bakes in the cumulative hint text directly.
 
 The shared `web-5` environment reaches five services through
 `http://target:8102`, `http://target:8103`, `http://target:8111`,
@@ -89,9 +88,10 @@ docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
 Check task contracts with Harbor's oracle agent:
 
 ```bash
-harbor run -p harbor/tasks/web-5 -a oracle
-harbor run -p harbor/tasks/web-5-l4 -a oracle
-harbor run -p harbor/tasks/co2 -a oracle
+harbor run -p harbor/tasks/shared/web-5/l0 -a oracle
+harbor run -p harbor/tasks/shared/web-5/l4 -a oracle
+harbor run -p harbor/tasks/individual/co2/l0 -a oracle
+harbor run -p harbor/tasks/individual/sniffy/l4 -a oracle
 ```
 
 Oracle runs validate environment and verifier wiring via `solution/solve.sh`;

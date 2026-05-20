@@ -10,7 +10,8 @@ available for older calibration workflows; see [Legacy manifest runner](#legacy-
 
 ## Harbor task layout
 
-Each checked task under `harbor/tasks/<task-id>/` has the same structure:
+Each checked task under `harbor/tasks/shared/<task-id>/lN/` or
+`harbor/tasks/individual/<task-id>/lN/` has the same structure:
 
 | Harbor file | Purpose |
 | ----------- | ------- |
@@ -25,7 +26,7 @@ Each checked task under `harbor/tasks/<task-id>/` has the same structure:
 Run a task with Harbor:
 
 ```bash
-harbor run -p harbor/tasks/<task-id> -a <agent>
+harbor run -p harbor/tasks/<task-path> -a <agent>
 ```
 
 Harbor run artifacts are written under `jobs/`.
@@ -34,17 +35,17 @@ Harbor run artifacts are written under `jobs/`.
 
 | Harbor task | Scope |
 | ----------- | ----- |
-| `web-5` | All five services, no hints |
-| `web-5-l1` … `web-5-l4` | All five services, cumulative hints through level *N* |
-| `co2` | CO2 only |
-| `lost-transliteration` | Lost Transliteration only |
-| `mythos-perl` | Mythos Perl only |
-| `sniffy` | Sniffy only |
-| `webpage-to-pdf-1` | Webpage to PDF 1 only |
+| `shared/web-5/l0` … `l4` | All five services, no hints through cumulative level 4 |
+| `individual/co2/l0` … `l4` | CO2 only, no hints through cumulative level 4 |
+| `individual/lost-transliteration/l0` … `l4` | Lost Transliteration only, no hints through cumulative level 4 |
+| `individual/mythos-perl/l0` … `l4` | Mythos Perl only, no hints through cumulative level 4 |
+| `individual/sniffy/l0` … `l4` | Sniffy only, no hints through cumulative level 4 |
+| `individual/webpage-to-pdf-1/l0` … `l4` | Webpage to PDF 1 only, no hints through cumulative level 4 |
 
-There is no `web-5-l0`; use `web-5` for no-hint runs. Hint levels are separate
-task directories because Harbor has no native hint-level field—each
-`web-5-lN/instruction.md` bakes in the cumulative hint text directly.
+Shared and individual tasks both use explicit `l0` through `l4` directories.
+Hint levels are separate task directories because Harbor has no native
+hint-level field; each `lN/instruction.md` bakes in the cumulative hint text
+directly.
 
 ## Components (Harbor)
 
@@ -101,8 +102,9 @@ flowchart TB
     main --- tip
 ```
 
-Individual Harbor tasks (`co2`, `sniffy`, …) use the same `main` + `target`
-pattern but include only one challenge service and one gateway mapping entry.
+Individual Harbor tasks (`individual/co2/l0`, `individual/sniffy/l4`, …) use
+the same `main` + `target` pattern but include only one challenge service and
+one gateway mapping entry.
 
 ### Web-5 target surface
 
@@ -165,8 +167,8 @@ sequenceDiagram
     V->>R: details.json (solved / unsolved service ids)
 ```
 
-`harbor run -p harbor/tasks/<task-id> -a oracle` verifies a task contract using
-`solution/solve.sh`; it does not measure model capability.
+`harbor run -p harbor/tasks/<task-path> -a oracle` verifies a task contract
+using `solution/solve.sh`; it does not measure model capability.
 
 ## Key files
 
@@ -193,7 +195,7 @@ services on a shared network). Differences:
 | | Harbor (canonical) | Manifest runner (fallback) |
 | --- | --- | --- |
 | Agent service | `main`, terminal inside container | `attacker`, host `docker compose exec` |
-| Task definition | `harbor/tasks/<id>/` | `bundles/<id>/manifest.json` |
+| Task definition | `harbor/tasks/shared/<id>/lN/` or `harbor/tasks/individual/<id>/lN/` | `bundles/<id>/manifest.json` |
 | Scoring | `/app/flags.txt` + verifier | `submit_flag` tool (HTTP to host scorer) |
 | Run output | `jobs/` | `runs/` |
 
