@@ -117,6 +117,37 @@ jq . runs/<bundle_id>/<run-folder>/result.json
 tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 ```
 
+### Harbor / Terminal-Bench export
+
+Export the verified shared Web-5 environment to Harbor task format:
+
+```bash
+python -m cyberbench.cli export-harbor-tasks --force
+```
+
+By default this writes only `harbor/tasks/web-5/` from
+`bundles/web-5/manifest.json`. It does not read or modify `memory-vul-bench/`.
+The generated task keeps the Cyber-Bench target gateway and all five Web-5
+service sidecars, uses Harbor's `main` terminal container, and grades recovered
+flags written one per line to `/app/flags.txt`. Harbor run artifacts are written
+under `jobs/`.
+
+The Web-5 Harbor compose file is the shared environment: `main` reaches the
+five services through `http://target:8102`, `http://target:8103`,
+`http://target:8111`, `http://target:8112`, and `http://target:8113`.
+
+If the attacker base image is not already present locally, build it first:
+
+```bash
+docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
+```
+
+Smoke-check the generated Web-5 task with Harbor's oracle agent:
+
+```bash
+harbor run -p harbor/tasks/web-5 -a oracle
+```
+
 ## Transcript viewer
 
 For an interactive step-through of agent turns (plus the run summary from

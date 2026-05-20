@@ -12,6 +12,8 @@ from cyberbench.config import (
     require_openrouter_key,
     resolve_model,
 )
+from cyberbench.harbor_export import add_arguments as add_harbor_export_arguments
+from cyberbench.harbor_export import default_harbor_manifests, export_harbor_tasks
 from cyberbench.manifest import BundleManifest, load_manifest, validate_manifest
 from cyberbench.openrouter import OpenRouterClient, first_message
 from cyberbench.opencode_runner import OpenCodeRunner, _default_opencode_workspace
@@ -73,6 +75,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional manifest hint level to expose to the agent.",
     )
 
+    export_harbor = subparsers.add_parser(
+        "export-harbor-tasks",
+        help="Export Cyber-Bench bundle manifests into Harbor task directories.",
+    )
+    add_harbor_export_arguments(export_harbor)
+
     args = parser.parse_args(argv)
     if args.command == "validate-config":
         return _validate_config()
@@ -86,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "run-opencode":
         return _run_opencode(args)
+    if args.command == "export-harbor-tasks":
+        return _export_harbor_tasks(args)
     raise AssertionError(args.command)
 
 
@@ -248,6 +258,21 @@ def _validate_level(manifest: BundleManifest, level: int | None) -> bool:
         file=sys.stderr,
     )
     return False
+
+
+def _export_harbor_tasks(args: argparse.Namespace) -> int:
+    manifest_paths = args.manifests or default_harbor_manifests()
+    try:
+        task_dirs = export_harbor_tasks(
+            manifest_paths,
+            output_root=args.output_root,
+            force=args.force,
+        )
+    except (FileExistsError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"exported": [str(path) for path in task_dirs]}, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
