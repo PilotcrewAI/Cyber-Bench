@@ -45,7 +45,7 @@ def test_web_5_harbor_task_has_shared_environment() -> None:
 
     assert "main:" in compose
     assert "target:" in compose
-    assert "networks:\n  bench: {}" in compose
+    assert "networks:\n  bench:\n    internal: true" in compose
     assert "gctf-2025-lost-transliteration:" in compose
     assert "gctf-2025-mythos-perl:" in compose
     assert "ductf-2024-co2:" in compose
@@ -70,7 +70,7 @@ def test_harbor_task_services_share_internal_network() -> None:
     for task_dir in all_task_paths():
         compose = (task_dir / "environment/docker-compose.yaml").read_text()
 
-        assert "networks:\n  bench: {}" in compose
+        assert "networks:\n  bench:\n    internal: true" in compose
         service_starts = [match.start() for match in service_header.finditer(compose)]
         for index, start in enumerate(service_starts):
             end = service_starts[index + 1] if index + 1 < len(service_starts) else compose.find("\nnetworks:", start)
@@ -78,6 +78,13 @@ def test_harbor_task_services_share_internal_network() -> None:
                 end = len(compose)
             block = compose[start:end]
             assert '    networks:\n      - "bench"' in block
+
+
+def test_harbor_tasks_do_not_use_harbor_no_network_overlay() -> None:
+    for task_dir in all_task_paths():
+        task_toml = (task_dir / "task.toml").read_text()
+
+        assert "allow_internet = true" in task_toml
 
 
 def test_harbor_tasks_use_file_based_grading_contract() -> None:

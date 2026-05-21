@@ -32,4 +32,5 @@ services:
     networks:
       - "bench"
 networks:
-  bench: {}
+  bench:
+    internal: true
