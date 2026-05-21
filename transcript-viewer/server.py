@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small local server: browse runs/* transcripts + result.json (no file upload)."""
+"""Small local server: browse Harbor jobs/* and legacy runs/* transcripts."""
 
 from __future__ import annotations
 
@@ -12,9 +12,18 @@ from pathlib import Path
 from typing import Final
 from urllib.parse import parse_qs, urlparse
 
+from harbor_transcript import (
+    enrich_harbor_result,
+    load_harbor_benchmark_context,
+    load_trajectory_transcript,
+    trial_has_agent_trace,
+)
+
 VIEWER_ROOT: Final = Path(__file__).resolve().parent
 DEFAULT_REPO_ROOT: Final = VIEWER_ROOT.parent
 BENCHMARK_STATIC_JSON: Final = "benchmark_static.json"
+SOURCE_RUNS: Final = "runs"
+SOURCE_JOBS: Final = "jobs"
 
 
 def _read_jsonl_dict_lines(
@@ -52,6 +61,7 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
     viewer_root: Path = VIEWER_ROOT
     repo_root: Path = DEFAULT_REPO_ROOT
     runs_root: Path = DEFAULT_REPO_ROOT / "runs"
+    jobs_root: Path = DEFAULT_REPO_ROOT / "jobs"
 
     def log_message(self, format: str, *args: object) -> None:
         sys.stderr.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
@@ -84,6 +94,23 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
         return True
+
+    def _under_jobs(self, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(self.jobs_root.resolve())
+        except ValueError:
+            return False
+        return True
+
+    def _safe_trial_path(self, job: str, trial: str) -> Path:
+        if not _is_safe_path_segment(job) or not _is_safe_path_segment(trial):
+            raise ValueError("invalid job or trial name")
+        candidate = (self.jobs_root / job / trial).resolve()
+        if not self._under_jobs(candidate):
+            raise ValueError("path outside jobs directory")
+        if not candidate.is_dir():
+            raise FileNotFoundError("trial directory not found")
+        return candidate
 
     def _safe_run_path(self, bundle: str, run: str) -> Path:
         if not _is_safe_path_segment(bundle) or not _is_safe_path_segment(run):
@@ -277,7 +304,7 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             ),
         }
 
-    def _build_index(self) -> dict[str, list[str]]:
+    def _build_runs_index(self) -> dict[str, list[str]]:
         bundles: dict[str, list[str]] = {}
         root = self.runs_root
         if not root.is_dir():
@@ -294,6 +321,104 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             if run_names:
                 bundles[bundle_dir.name] = run_names
         return bundles
+
+    def _build_jobs_index(self) -> dict[str, list[str]]:
+        jobs: dict[str, list[str]] = {}
+        root = self.jobs_root
+        if not root.is_dir():
+            return jobs
+        for job_dir in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+            if not job_dir.is_dir():
+                continue
+            trial_names: list[str] = []
+            for trial_dir in sorted(job_dir.iterdir(), key=lambda p: p.name):
+                if trial_dir.is_dir() and trial_has_agent_trace(trial_dir):
+                    trial_names.append(trial_dir.name)
+            if trial_names:
+                jobs[job_dir.name] = trial_names
+        return jobs
+
+    def _load_harbor_run_payload(
+        self,
+        job_q: str,
+        trial_q: str,
+    ) -> dict[str, object]:
+        trial_dir = self._safe_trial_path(job_q, trial_q)
+        trial_result = self._read_result(trial_dir)
+        transcript, parse_warnings = load_trajectory_transcript(
+            trial_dir,
+            trial_result=trial_result,
+        )
+        trajectory_path = trial_dir / "agent" / "trajectory.json"
+        return {
+            "source": SOURCE_JOBS,
+            "bundle": job_q,
+            "run": trial_q,
+            "transcript": transcript,
+            "result": enrich_harbor_result(trial_dir, trial_result),
+            "transcript_path": (
+                self._relative_repo(trajectory_path)
+                if trajectory_path.is_file()
+                else self._relative_repo(trial_dir / "agent")
+            ),
+            "trajectory_path": (
+                self._relative_repo(trajectory_path)
+                if trajectory_path.is_file()
+                else None
+            ),
+            "opencode_path": None,
+            "opencode_session_path": None,
+            "result_path": (
+                self._relative_repo(trial_dir / "result.json")
+                if (trial_dir / "result.json").is_file()
+                else None
+            ),
+            "benchmark_static_path": None,
+            "benchmark_context": load_harbor_benchmark_context(
+                trial_dir,
+                self.repo_root,
+                trial_result=trial_result,
+            ),
+            "parse_warnings": parse_warnings,
+        }
+
+    def _load_legacy_run_payload(self, bundle_q: str, run_q: str) -> dict[str, object]:
+        run_dir = self._safe_run_path(bundle_q, run_q)
+        transcript, tw = self._read_transcript_lines(run_dir)
+        opencode, ow = self._read_opencode_lines(run_dir)
+        opencode_session, sw = self._read_opencode_session_lines(run_dir)
+        parse_warnings = [*tw, *ow, *sw]
+        transcript = self._merge_opencode_transcript(transcript, opencode, opencode_session)
+        static_path = run_dir / BENCHMARK_STATIC_JSON
+        return {
+            "source": SOURCE_RUNS,
+            "bundle": bundle_q,
+            "run": run_q,
+            "transcript": transcript,
+            "result": self._read_result(run_dir),
+            "transcript_path": self._relative_repo(run_dir / "transcript.jsonl"),
+            "trajectory_path": None,
+            "opencode_path": (
+                self._relative_repo(run_dir / "opencode.stdout.jsonl")
+                if (run_dir / "opencode.stdout.jsonl").is_file()
+                else None
+            ),
+            "opencode_session_path": (
+                self._relative_repo(run_dir / "opencode.session.jsonl")
+                if (run_dir / "opencode.session.jsonl").is_file()
+                else None
+            ),
+            "result_path": (
+                self._relative_repo(run_dir / "result.json")
+                if (run_dir / "result.json").is_file()
+                else None
+            ),
+            "benchmark_static_path": (
+                self._relative_repo(static_path) if static_path.is_file() else None
+            ),
+            "benchmark_context": self._load_benchmark_context(run_dir),
+            "parse_warnings": parse_warnings,
+        }
 
     def _relative_repo(self, path: Path) -> str:
         try:
@@ -315,7 +440,14 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/api/index":
             try:
-                self.send_json({"bundles": self._build_index()})
+                self.send_json(
+                    {
+                        "runs": self._build_runs_index(),
+                        "jobs": self._build_jobs_index(),
+                        # Legacy clients expect top-level "bundles" for runs only.
+                        "bundles": self._build_runs_index(),
+                    }
+                )
             except OSError as e:
                 self.send_json({"error": str(e)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
@@ -324,57 +456,27 @@ class TranscriptViewerRequestHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             bundle_vals = params.get("bundle", [])
             run_vals = params.get("run", [])
+            source_vals = params.get("source", [SOURCE_RUNS])
             if len(bundle_vals) != 1 or len(run_vals) != 1:
                 self.send_json(
                     {"error": "exactly one bundle= and run= query parameter required"},
                     status=HTTPStatus.BAD_REQUEST,
                 )
                 return
-            bundle_q, run_q = bundle_vals[0], run_vals[0]
-            try:
-                run_dir = self._safe_run_path(bundle_q, run_q)
-                transcript, tw = self._read_transcript_lines(run_dir)
-                opencode, ow = self._read_opencode_lines(run_dir)
-                opencode_session, sw = self._read_opencode_session_lines(run_dir)
-                parse_warnings = [*tw, *ow, *sw]
-                transcript = self._merge_opencode_transcript(transcript, opencode, opencode_session)
-                result_obj = self._read_result(run_dir)
-                transcript_path = self._relative_repo(run_dir / "transcript.jsonl")
-                opencode_path = (
-                    self._relative_repo(run_dir / "opencode.stdout.jsonl")
-                    if (run_dir / "opencode.stdout.jsonl").is_file()
-                    else None
-                )
-                opencode_session_path = (
-                    self._relative_repo(run_dir / "opencode.session.jsonl")
-                    if (run_dir / "opencode.session.jsonl").is_file()
-                    else None
-                )
-                result_path = (
-                    self._relative_repo(run_dir / "result.json")
-                    if (run_dir / "result.json").is_file()
-                    else None
-                )
-                static_path = run_dir / BENCHMARK_STATIC_JSON
-                benchmark_static_path = (
-                    self._relative_repo(static_path) if static_path.is_file() else None
-                )
-                benchmark_context = self._load_benchmark_context(run_dir)
+            if len(source_vals) != 1 or source_vals[0] not in {SOURCE_RUNS, SOURCE_JOBS}:
                 self.send_json(
-                    {
-                        "bundle": bundle_q,
-                        "run": run_q,
-                        "transcript": transcript,
-                        "result": result_obj,
-                        "transcript_path": transcript_path,
-                        "opencode_path": opencode_path,
-                        "opencode_session_path": opencode_session_path,
-                        "result_path": result_path,
-                        "benchmark_static_path": benchmark_static_path,
-                        "benchmark_context": benchmark_context,
-                        "parse_warnings": parse_warnings,
-                    }
+                    {"error": f"source= must be {SOURCE_RUNS!r} or {SOURCE_JOBS!r}"},
+                    status=HTTPStatus.BAD_REQUEST,
                 )
+                return
+            bundle_q, run_q = bundle_vals[0], run_vals[0]
+            source_q = source_vals[0]
+            try:
+                if source_q == SOURCE_JOBS:
+                    payload = self._load_harbor_run_payload(bundle_q, run_q)
+                else:
+                    payload = self._load_legacy_run_payload(bundle_q, run_q)
+                self.send_json(payload)
             except FileNotFoundError as e:
                 self.send_json({"error": str(e)}, status=HTTPStatus.NOT_FOUND)
             except ValueError as e:
@@ -635,15 +737,18 @@ def _make_handler_class(
     viewer_root: Path,
     repo_root: Path,
     runs_root: Path,
+    jobs_root: Path,
 ) -> type[TranscriptViewerRequestHandler]:
     vr = viewer_root.resolve()
     rr = repo_root.resolve()
     sr = runs_root.resolve()
+    jr = jobs_root.resolve()
 
     class Bound(TranscriptViewerRequestHandler):
         viewer_root = vr
         repo_root = rr
         runs_root = sr
+        jobs_root = jr
 
     return Bound
 
@@ -664,16 +769,24 @@ def main() -> None:
         default=None,
         help="override runs directory (default: <repo-root>/runs)",
     )
+    parser.add_argument(
+        "--jobs-dir",
+        type=Path,
+        default=None,
+        help="override Harbor jobs directory (default: <repo-root>/jobs)",
+    )
     args = parser.parse_args()
     repo_root = args.repo_root.resolve()
     runs_root = (args.runs_dir or (repo_root / "runs")).resolve()
+    jobs_root = (args.jobs_dir or (repo_root / "jobs")).resolve()
     viewer_root = VIEWER_ROOT.resolve()
 
-    handler = _make_handler_class(viewer_root, repo_root, runs_root)
+    handler = _make_handler_class(viewer_root, repo_root, runs_root, jobs_root)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     url = f"http://{args.host}:{args.port}/"
     print(f"Cyber-Bench transcript viewer — open {url}")
-    print(f"Runs root: {runs_root}")
+    print(f"Harbor jobs root: {jobs_root}")
+    print(f"Legacy runs root: {runs_root}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

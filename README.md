@@ -143,9 +143,11 @@ For an interactive step-through of agent turns (plus the run summary from
 python transcript-viewer/server.py
 ```
 
-Defaults to http://127.0.0.1:8765/ and reads under `runs/`. Choose bundle and run
-from the dropdowns; **Reload** re-reads files from disk. Optional flags:
-`--port`, `--runs-dir`, `--repo-root` (see `python transcript-viewer/server.py --help`).
+Defaults to http://127.0.0.1:8765/. Use **Harbor jobs** for
+`jobs/<job>/<trial>/agent/trajectory.json`, or **Legacy runs** for
+`runs/<bundle>/<run>/transcript.jsonl`. **Reload** re-reads files from disk.
+Optional flags: `--port`, `--jobs-dir`, `--runs-dir`, `--repo-root`
+(see `python transcript-viewer/server.py --help`).
 
 ## Public Source Archives
 
