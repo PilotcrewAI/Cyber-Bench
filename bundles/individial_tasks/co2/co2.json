@@ -29,7 +29,7 @@
       "role": "ctf",
       "category": "web",
       "image": "cyberbench/ductf-2024:co2",
-      "build_context": "resources/ctf-archives/downunderctf-2024/web/co2/src",
+      "build_context": "harbor/assets/web-5/sources/co2",
       "container_port": 1337,
       "env": {
         "flag": "false"

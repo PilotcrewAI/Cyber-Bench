@@ -25,7 +25,7 @@ services:
     expose:
       - "5000"
     build:
-      context: "../../../../../../resources/ctf-archives/hkcert-ctf/CTF-2024/52a-webpage-to-pdf-1/env/chal"
+      context: "../../../../../assets/web-5/sources/webpage-to-pdf-1"
     networks:
       - "bench"
 networks:

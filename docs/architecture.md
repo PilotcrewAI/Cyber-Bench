@@ -6,7 +6,7 @@ for task development and evaluation.** Each task is a self-contained directory
 with instructions, Compose environment, verifier, and oracle solution.
 
 The legacy manifest runner (`cyberbench.cli run`, `run-opencode`) remains
-available for older calibration workflows; see [Legacy manifest runner](#legacy-manifest-runner-fallback) at the end.
+available for older calibration workflows; see [Legacy manifest runner (fallback)](#legacy-manifest-runner-fallback) at the end.
 
 ## Harbor task layout
 
@@ -169,7 +169,8 @@ using `solution/solve.sh`; it does not measure model capability.
 | Harbor tasks (canonical) | `harbor/tasks/` |
 | Attacker base image | `cyberbench/runtime/attacker/` |
 | Gateway reference impl | `cyberbench/runtime/gateway.py` |
-| CTF source archives | `resources/ctf-archives/` (ignored, local build input) |
+| Web-5 source contexts | `harbor/assets/web-5/sources/` |
+| Raw CTF source archives | `resources/ctf-archives/` (ignored import input) |
 
 ---
 

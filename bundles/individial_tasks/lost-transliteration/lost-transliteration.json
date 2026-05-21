@@ -29,7 +29,7 @@
       "role": "ctf",
       "category": "web",
       "image": "cyberbench/google-web-10:gctf-2025-lost-transliteration",
-      "build_context": "resources/ctf-archives/google-ctf/2025/quals/web-lost-in-transliteration/challenge",
+      "build_context": "harbor/assets/web-5/sources/lost-transliteration",
       "privileged": true,
       "container_port": 1337,
       "env": {

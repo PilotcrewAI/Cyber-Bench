@@ -11,7 +11,7 @@ targets, and LLM agents under cost budgets.
 directories live under `harbor/tasks/` and are the canonical format for defining,
 calibrating, and running the current Web-5 benchmark set. The legacy manifest
 runner (`bundles/*/manifest.json`, `cyberbench.cli run`) remains available as a
-fallback; see [Legacy manifest runner](#legacy-manifest-runner-fallback).
+fallback; see [Legacy (fallback)](#legacy-fallback).
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ CYBERBENCH_MODEL=anthropic/claude-sonnet-4.5
 
 If neither is set, Cyber-Bench falls back to `anthropic/claude-sonnet-4.5`.
 
-## Harbor / Terminal-Bench tasks
+## Terminal-Bench Format tasks
 
 Checked task directories under `harbor/tasks/` are the **canonical** Web-5
 benchmark format. Edit them directly when changing instructions, Compose
@@ -70,10 +70,6 @@ grading via `/app/flags.txt`. These tasks do not read or modify
 | `harbor/tasks/individual/sniffy/l0/` … `l4/` | Sniffy only, no hints through cumulative level 4 |
 | `harbor/tasks/individual/webpage-to-pdf-1/l0/` … `l4/` | Webpage to PDF 1 only, no hints through cumulative level 4 |
 
-Shared and individual tasks both use explicit `l0` through `l4` directories.
-Hint levels are separate directories because Harbor has no native hint-level
-field; each `lN/instruction.md` bakes in the cumulative hint text directly.
-
 The shared `web-5` environment reaches five services through
 `http://target:8102`, `http://target:8103`, `http://target:8111`,
 `http://target:8112`, and `http://target:8113`. Individual tasks include only
@@ -85,7 +81,7 @@ Build the attacker base image once if it is not already present locally:
 docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
 ```
 
-Warm all current Web-5 images once before model runs:
+Build Web-5 images once before model runs (so agents spend time solving challenges instead of waiting for image builds):
 
 ```bash
 source .venv/bin/activate
@@ -127,9 +123,8 @@ See `docs/architecture.md` for container topology and grading flow diagrams.
 | 8112 | `ductf-2024-sniffy` | DownUnderCTF 2024 |
 | 8113 | `hkcert-2024-webpage-to-pdf-1` | HKCERT CTF 2024 |
 
-After downloading the required public source archives (see below), build the
-challenge images referenced by each task's `environment/docker-compose.yaml`,
-then run oracle checks before model calibration.
+Web-5 Harbor tasks build from committed source contexts under
+`harbor/assets/web-5/sources/`. Run oracle checks before model evals.
 
 Add new Harbor tasks under `harbor/tasks/` once the service has been validated
 in isolation and documented in `REPORT.md`.
@@ -149,12 +144,19 @@ Defaults to http://127.0.0.1:8765/. Use **Harbor jobs** for
 Optional flags: `--port`, `--jobs-dir`, `--runs-dir`, `--repo-root`
 (see `python transcript-viewer/server.py --help`).
 
-## Public Source Archives
+## Legacy (fallback)
+
+Everything below is **legacy**. Treat it as a fallback when Harbor is not an
+option—for example, comparing against existing `runs/` artifacts, using the
+transcript viewer’s legacy mode, importing raw CTF archives, or running the
+older in-process or OpenCode CLI paths. 
+### Public source archives
 
 Raw public CTF archives are configured in
 `sources/public_web_ctf_sources.json` and download into
-`resources/ctf-archives/`. The current Web-5 Harbor tasks need Google CTF,
-DownUnderCTF 2024, and HKCERT CTF sources:
+`resources/ctf-archives/`. Checked Web-5 Harbor tasks do not require this
+download path; they use committed copies under `harbor/assets/web-5/sources/`.
+Use the downloader only when importing or validating additional source archives:
 
 ```bash
 python scripts/download_sources.py --source-id google-ctf
@@ -162,11 +164,11 @@ python scripts/download_sources.py --source-id downunderctf-2024
 python scripts/download_sources.py --source-id hkcert-ctf
 ```
 
-## Legacy manifest runner (fallback)
+### Manifest runner
 
 `bundles/*/manifest.json` is the older Cyber-Bench task format. The CLI can
 still validate manifests, generate per-run Compose files, and drive the
-in-process API runner or OpenCode backend. **Prefer Harbor for new task work.**
+in-process API runner or OpenCode backend as a fallback.
 
 The container topology matches Harbor (`target` gateway + challenge services).
 Differences: the agent service is named `attacker` (host `docker compose exec`),
@@ -206,13 +208,6 @@ jq . runs/<bundle_id>/<run-folder>/result.json
 tail -n 20 runs/<bundle_id>/<run-folder>/transcript.jsonl
 ```
 
-Legacy manifests under `bundles/web-5/` and `bundles/individial_tasks/` mirror
-the checked Harbor tasks and are kept for transcript viewer integration and
+Manifests under `bundles/web-5/` and `bundles/individial_tasks/` mirror the
+checked Harbor tasks and remain only for transcript viewer integration and
 historical comparison against existing `runs/` artifacts.
-
-## Assets
-
-Raw public CTF downloads belong under ignored `resources/ctf-archives/`.
-Committed files should be Harbor task directories under `harbor/tasks/`, runner
-code, import scripts, and documentation. Legacy manifests under `bundles/` are
-kept for the fallback runner only.

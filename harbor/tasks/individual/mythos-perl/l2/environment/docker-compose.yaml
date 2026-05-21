@@ -25,7 +25,7 @@ services:
     expose:
       - "1338"
     build:
-      context: "../../../../../../resources/ctf-archives/google-ctf/2025/quals/web-mythos-perl/challenge"
+      context: "../../../../../assets/web-5/sources/mythos-perl"
     privileged: true
     environment:
       FLAG: "CTF{I_like_my_packages_like_I_like_my_python_classes_like_I_like_my_javascript_objects...polluted.Anyway_hope_to_see_some_of_yall_in_mexico_city!}"
