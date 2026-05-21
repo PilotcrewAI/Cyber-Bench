@@ -14,6 +14,8 @@ RUN apt-get update && \
       nmap \
       poppler-utils \
       procps \
+      asciinema \
+      tmux \
       unzip \
       vim-tiny \
       wget \

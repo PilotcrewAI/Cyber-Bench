@@ -232,10 +232,15 @@
   <header>
     <h1>Transcript viewer</h1>
     <div class="file-row">
-      <label class="nav-stats" for="bundle-select">Bundle</label>
-      <select class="jump" id="bundle-select" title="Bundle"></select>
-      <label class="nav-stats" for="run-select">Run</label>
-      <select class="jump" id="run-select" style="max-width: min(440px, 95vw);" title="Run directory"></select>
+      <label class="nav-stats" for="source-select">Source</label>
+      <select class="jump" id="source-select" title="Artifact source">
+        <option value="jobs">Harbor jobs</option>
+        <option value="runs">Legacy runs</option>
+      </select>
+      <label class="nav-stats" for="bundle-select" id="bundle-label">Job</label>
+      <select class="jump" id="bundle-select" title="Job or bundle"></select>
+      <label class="nav-stats" for="run-select" id="run-label">Trial</label>
+      <select class="jump" id="run-select" style="max-width: min(440px, 95vw);" title="Trial or run directory"></select>
       <button type="button" id="reload-run">Reload</button>
       <button type="button" id="prev" disabled>← Prev</button>
       <button type="button" id="next" disabled>Next →</button>
@@ -260,13 +265,14 @@
     </div>
     <div id="panel-transcript" role="tabpanel" aria-labelledby="tab-transcript">
       <p class="muted" style="margin: 0 0 16px; color: var(--muted); font-size: 0.82rem;">
-        Reads <span class="mono">runs/&lt;bundle&gt;/&lt;run&gt;/</span> on disk. Start the server with
-        <span class="mono">python transcript-viewer/server.py</span>, then open the URL it prints.
-        Navigate steps with <kbd>←</kbd> <kbd>→</kbd> or <kbd>j</kbd> <kbd>k</kbd> when focus is not in a control.
+        Harbor: <span class="mono">jobs/&lt;job&gt;/&lt;trial&gt;/agent/trajectory.json</span>.
+        Legacy: <span class="mono">runs/&lt;bundle&gt;/&lt;run&gt;/transcript.jsonl</span>.
+        Start with <span class="mono">python transcript-viewer/server.py</span>.
+        Navigate with <kbd>←</kbd> <kbd>→</kbd> or <kbd>j</kbd> <kbd>k</kbd> when focus is not in a control.
       </p>
       <section id="view"></section>
       <section class="hint" id="placeholder">
-        Select a bundle and run above. Each run folder must contain <span class="mono">transcript.jsonl</span>.
+        Select a Harbor job/trial or legacy bundle/run above.
       </section>
     </div>
     <div id="panel-result" role="tabpanel" aria-labelledby="tab-result" hidden>
@@ -302,8 +308,11 @@
 
   /** @typedef {{ event: string, step?: number } & Record<string, unknown>} TranscriptRecord */
 
+  const sourceSelect = document.getElementById("source-select");
   const bundleSelect = document.getElementById("bundle-select");
   const runSelect = document.getElementById("run-select");
+  const bundleLabel = document.getElementById("bundle-label");
+  const runLabel = document.getElementById("run-label");
   const reloadRunBtn = document.getElementById("reload-run");
   const prevBtn = document.getElementById("prev");
   const nextBtn = document.getElementById("next");
@@ -342,7 +351,24 @@
   let sliceIdx = 0;
 
   /** @type {Record<string, string[]>} */
-  let runIndex = {};
+  let runsIndex = {};
+  /** @type {Record<string, string[]>} */
+  let jobsIndex = {};
+
+  function currentSource() {
+    const v = sourceSelect.value;
+    return v === "jobs" ? "jobs" : "runs";
+  }
+
+  function currentIndex() {
+    return currentSource() === "jobs" ? jobsIndex : runsIndex;
+  }
+
+  function updateSourceLabels() {
+    const jobs = currentSource() === "jobs";
+    bundleLabel.textContent = jobs ? "Job" : "Bundle";
+    runLabel.textContent = jobs ? "Trial" : "Run";
+  }
 
   /**
    * @param {unknown} v
@@ -522,9 +548,17 @@
     }
 
     row("status", r.status);
+    row("task_path", r.task_path);
+    row("task_name", r.task_name);
+    row("agent", r.agent);
     row("bundle_id", r.bundle_id);
     row("model", r.model);
     row("backend", r.backend);
+    row("reward", r.reward);
+    row("exception_type", r.exception_type);
+    row("exception_message", r.exception_message);
+    row("n_episodes", r.n_episodes);
+    row("submitted_flags", r.submitted_flags);
     row("opencode_model", r.opencode_model);
     row("error", r.error);
     row("opencode_usage", r.opencode_usage);
@@ -711,6 +745,25 @@
     }
   }
 
+  /**
+   * @param {unknown} raw
+   * @returns {Record<string, string[]>}
+   */
+  function parseIndexMap(raw) {
+    /** @type {Record<string, string[]>} */
+    const idx = {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return idx;
+    }
+    for (const k of Object.keys(raw)) {
+      const arr = /** @type {Record<string, unknown>} */ (raw)[k];
+      if (Array.isArray(arr)) {
+        idx[k] = arr.filter((x) => typeof x === "string");
+      }
+    }
+    return idx;
+  }
+
   async function fetchRunIndex() {
     const resp = await fetch("/api/index");
     if (!resp.ok) {
@@ -720,19 +773,10 @@
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new Error("Invalid /api/index response");
     }
-    const bundles = data.bundles;
-    if (!bundles || typeof bundles !== "object" || Array.isArray(bundles)) {
-      throw new Error("Invalid bundles in /api/index");
-    }
-    /** @type {Record<string, string[]>} */
-    const idx = {};
-    for (const k of Object.keys(bundles)) {
-      const arr = bundles[k];
-      if (Array.isArray(arr)) {
-        idx[k] = arr.filter((x) => typeof x === "string");
-      }
-    }
-    return idx;
+    return {
+      runs: parseIndexMap(data.runs ?? data.bundles),
+      jobs: parseIndexMap(data.jobs),
+    };
   }
 
   async function loadRunFromServer() {
@@ -751,7 +795,10 @@
       return;
     }
     setError("");
-    const url = `/api/run?bundle=${encodeURIComponent(bundle)}&run=${encodeURIComponent(run)}`;
+    const source = currentSource();
+    const url =
+      `/api/run?source=${encodeURIComponent(source)}` +
+      `&bundle=${encodeURIComponent(bundle)}&run=${encodeURIComponent(run)}`;
     let resp;
     try {
       resp = await fetch(url);
@@ -812,12 +859,19 @@
     } else {
       setError("");
     }
+    const pathParts = [
+      data.transcript_path != null ? String(data.transcript_path) : "",
+      data.trajectory_path != null ? String(data.trajectory_path) : "",
+      data.opencode_path != null ? String(data.opencode_path) : null,
+      data.opencode_session_path != null ? String(data.opencode_session_path) : null,
+      data.result_path != null ? String(data.result_path) : null,
+    ].filter((p) => p);
     renderResultPanel(
       data.result,
       data.result_path != null ? String(data.result_path) : null,
-      data.transcript_path != null ? String(data.transcript_path) : "",
-      data.opencode_path != null ? String(data.opencode_path) : null,
-      data.opencode_session_path != null ? String(data.opencode_session_path) : null,
+      pathParts.join(" • "),
+      null,
+      null,
       bundle,
       run,
     );
@@ -833,7 +887,7 @@
 
   function populateRunSelect(bundle) {
     runSelect.innerHTML = "";
-    const runs = runIndex[bundle] || [];
+    const runs = currentIndex()[bundle] || [];
     for (const r of runs) {
       const opt = document.createElement("option");
       opt.value = r;
@@ -842,14 +896,34 @@
     }
   }
 
+  function populateBundleSelect() {
+    bundleSelect.innerHTML = "";
+    const names = Object.keys(currentIndex()).sort(
+      (a, b) => (currentSource() === "jobs" ? b.localeCompare(a) : a.localeCompare(b)),
+    );
+    for (const b of names) {
+      const opt = document.createElement("option");
+      opt.value = b;
+      opt.textContent = b;
+      bundleSelect.appendChild(opt);
+    }
+  }
+
   async function bootstrapIndex() {
     try {
       setError("");
-      runIndex = await fetchRunIndex();
-      bundleSelect.innerHTML = "";
-      const names = Object.keys(runIndex).sort();
+      const indexes = await fetchRunIndex();
+      runsIndex = indexes.runs;
+      jobsIndex = indexes.jobs;
+      updateSourceLabels();
+      populateBundleSelect();
+      const names = Object.keys(currentIndex());
       if (names.length === 0) {
-        setError("No runs found: add runs/<bundle>/<id>/transcript.jsonl or pass --runs-dir.");
+        const hint =
+          currentSource() === "jobs"
+            ? "No Harbor jobs found under jobs/<job>/<trial>/agent/trajectory.json."
+            : "No legacy runs found under runs/<bundle>/<run>/transcript.jsonl.";
+        setError(hint);
         reloadRunBtn.disabled = true;
         hideResultPanel();
         hideContextPanel();
@@ -857,12 +931,6 @@
         return;
       }
       reloadRunBtn.disabled = false;
-      for (const b of names) {
-        const opt = document.createElement("option");
-        opt.value = b;
-        opt.textContent = b;
-        bundleSelect.appendChild(opt);
-      }
       populateRunSelect(bundleSelect.value);
       await loadRunFromServer();
     } catch (e) {
@@ -917,7 +985,13 @@
     const h2 = document.createElement("h2");
     const badge = document.createElement("span");
     badge.className = "badge turn";
-    badge.textContent = entry.source === "opencode" ? "OpenCode" : "Assistant";
+    const src = entry.source;
+    badge.textContent =
+      src === "opencode" || src === "opencode-session"
+        ? "OpenCode"
+        : src === "harbor"
+          ? "Harbor agent"
+          : "Assistant";
     h2.appendChild(badge);
     if (typeof entry.step === "number") {
       h2.appendChild(document.createTextNode(` Step ${entry.step}`));
@@ -1189,18 +1263,24 @@
       }
 
       row("status", r.status);
+      row("task_path", r.task_path);
+      row("reward", r.reward);
+      row("exception_type", r.exception_type);
+      row("exception_message", r.exception_message);
       row("backend", r.backend);
       row("elapsed_seconds", r.elapsed_seconds);
       row("error", r.error);
       row("opencode_usage", r.opencode_usage);
       row("steps", r.steps);
       row("cost_usd", r.cost_usd);
+      row("n_episodes", r.n_episodes);
       row("prompt_tokens", r.prompt_tokens);
       row("completion_tokens", r.completion_tokens);
       row("solved_service_count", r.solved_service_count);
       row("scored_service_count", r.scored_service_count);
       row("solved_service_ids", r.solved_service_ids);
       row("unsolved_service_ids", r.unsolved_service_ids);
+      row("submitted_flags", r.submitted_flags);
       wrap.appendChild(dl);
     } else {
       const pre = document.createElement("pre");
@@ -1376,6 +1456,33 @@
     );
     updateNav();
     renderSlice();
+  });
+
+  sourceSelect.addEventListener("change", async () => {
+    updateSourceLabels();
+    populateBundleSelect();
+    const names = Object.keys(currentIndex());
+    if (names.length === 0) {
+      setError(
+        currentSource() === "jobs"
+          ? "No Harbor jobs found."
+          : "No legacy runs found.",
+      );
+      reloadRunBtn.disabled = true;
+      entries = [];
+      slices = [];
+      sliceIdx = 0;
+      updateNav();
+      viewEl.innerHTML = "";
+      placeholder.style.display = "block";
+      hideResultPanel();
+      hideContextPanel();
+      return;
+    }
+    reloadRunBtn.disabled = false;
+    setError("");
+    populateRunSelect(bundleSelect.value);
+    await loadRunFromServer();
   });
 
   bundleSelect.addEventListener("change", async () => {

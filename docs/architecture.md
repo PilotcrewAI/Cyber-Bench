@@ -1,39 +1,210 @@
 # Runtime architecture
 
-This document describes how one `cyberbench.cli run` wires Docker, the LLM
-agent, and bundle targets together.
+This document describes how Cyber-Bench web CTF tasks run in Docker. **Harbor /
+Terminal-Bench task directories under `harbor/tasks/` are the canonical format
+for task development and evaluation.** Each task is a self-contained directory
+with instructions, Compose environment, verifier, and oracle solution.
 
-## Components
+The legacy manifest runner (`cyberbench.cli run`, `run-opencode`) remains
+available for older calibration workflows; see [Legacy manifest runner](#legacy-manifest-runner-fallback) at the end.
+
+## Harbor task layout
+
+Each checked task under `harbor/tasks/shared/<task-id>/lN/` or
+`harbor/tasks/individual/<task-id>/lN/` has the same structure:
+
+| Harbor file | Purpose |
+| ----------- | ------- |
+| `instruction.md` | Agent-facing prompt with target URLs and grading contract. |
+| `task.toml` | Harbor metadata, timeouts, and environment settings. |
+| `environment/Dockerfile` | Builds Harbor's `main` agent container from `cyberbench/attacker:latest`. |
+| `environment/docker-compose.yaml` | Challenge Compose overlay merged with Harbor's base file. |
+| `environment/gateway.py` | TCP gateway (same logic as `cyberbench/runtime/gateway.py`). |
+| `tests/test.sh`, `tests/grade_flags.py` | Verifier and exact-match flag scorer. |
+| `solution/solve.sh` | Oracle solution for Harbor contract checks. |
+
+Run a task with Harbor:
+
+```bash
+harbor run -p harbor/tasks/<task-path> -a <agent>
+```
+
+Harbor run artifacts are written under `jobs/`.
+
+### Checked Web-5 task set
+
+| Harbor task | Scope |
+| ----------- | ----- |
+| `shared/web-5/l0` … `l4` | All five services, no hints through cumulative level 4 |
+| `individual/XYZ/l0` … `l4` | Individual tasks only, no hints through cumulative level 4 |
+
+
+## Components (Harbor)
+
+- **Harbor host process** — `harbor run` merges Harbor's base Compose file with
+  the task's `environment/docker-compose.yaml`, starts containers, runs the
+  terminal agent inside `main`, then runs the verifier.
+- **Agent container** (`main`) — Long-lived terminal environment based on
+  `cyberbench/attacker:latest`. The agent runs commands here directly (not via
+  host `docker compose exec`). Recon tools (`curl`, `nmap`, …) are available.
+  Recovered flags go to `/app/flags.txt`.
+- **Gateway container** (`target`) — Runs `environment/gateway.py`. It listens on
+  stable **target ports** (e.g. 8102, 8103, …) and TCP-forwards each to the
+  correct challenge container and its **container port** (e.g. 1337). The map
+  comes from `CYBERBENCH_GATEWAY_MAP` in the task Compose file.
+- **Challenge containers** — One Compose service per scored target. Each bundles
+  a distinct app/stack (different images, env, sometimes `privileged`). They
+  only accept traffic from the internal Docker network.
+
+Grading is file-based: the agent writes flags one per line to `/app/flags.txt`.
+The verifier (`tests/grade_flags.py`) compares candidates against the expected
+flags embedded in the task, writes the fractional reward to
+`/logs/verifier/reward.txt`, and details to `/logs/verifier/details.json`.
+
+## Diagram: Harbor containers and traffic (web-5)
+
+Harbor starts every service in one Compose project on a shared internal network.
+The agent runs **inside** `main`; it reaches challenges through **`target`** on
+stable ports, not by connecting to each service's Compose hostname on its raw
+container port unless it bypasses the gateway manually.
+
+```mermaid
+flowchart TB
+    subgraph Host["Host machine (harbor run)"]
+        subgraph Docker["Docker Compose"]
+            subgraph Net["Shared internal network"]
+                main["main\nHarbor agent terminal\ncyberbench/attacker:latest\n/app/flags.txt · /logs/agent/"]
+                gw["target\npython:3.12 + gateway.py\nlistens :8102 :8103 :8111-8113"]
+                lt["gctf-2025-lost-transliteration\nexpose :1337"]
+                mp["gctf-2025-mythos-perl\nexpose :1338"]
+                co2["ductf-2024-co2\nexpose :1337"]
+                sn["ductf-2024-sniffy\nexpose :1337"]
+                pdf["hkcert-2024-webpage-to-pdf-1\nexpose :5000"]
+                tip["Challenge ports are expose-only.\nGateway ports are not published to localhost."]
+            end
+        end
+    end
+
+    main -->|"HTTP(S) http://target:8102 etc."| gw
+    gw -->|":8102 → lt:1337"| lt
+    gw -->|":8103 → mp:1338"| mp
+    gw -->|":8111 → co2:1337"| co2
+    gw -->|":8112 → sn:1337"| sn
+    gw -->|":8113 → pdf:5000"| pdf
+    main --- tip
+```
+
+Individual Harbor tasks (`individual/co2/l0`, `individual/sniffy/l4`, …) use
+the same `main` + `target` pattern but include only one challenge service and
+one gateway mapping entry.
+
+### Web-5 target surface
+
+From `main`, the shared `web-5` task exposes:
+
+| URL | Service |
+| --- | ------- |
+| `http://target:8102` | Lost Transliteration |
+| `http://target:8103` | Mythos Perl |
+| `http://target:8111` | CO2 |
+| `http://target:8112` | Sniffy |
+| `http://target:8113` | Webpage to PDF 1 |
+
+### One probe inside `main`
+
+```mermaid
+sequenceDiagram
+    participant H as Harbor agent loop
+    participant M as main container
+    participant T as target gateway
+    participant S as challenge container
+
+    H->>M: terminal command e.g. curl
+    M->>T: HTTP http://target:8102
+    T->>S: TCP to gctf-2025-lost-transliteration:1337
+    S-->>T: HTTP response
+    T-->>M: response
+    M-->>H: stdout / stderr
+
+    H->>M: write recovered flags
+    M->>M: /app/flags.txt one flag per line
+
+    Note over M: Verifier phase after agent timeout
+    M->>M: tests/test.sh → grade_flags.py
+    M->>M: /logs/verifier/reward.txt + details.json
+```
+
+### Harbor grading flow
+
+```mermaid
+sequenceDiagram
+    participant A as Agent (in main)
+    participant T as target gateway
+    participant S as Challenge container
+    participant F as /app/flags.txt
+    participant V as grade_flags.py
+    participant R as /logs/verifier/
+
+    A->>T: probe e.g. curl http://target:8102
+    T->>S: TCP forward via gateway map
+    S-->>T: HTTP response
+    T-->>A: response
+
+    A->>F: write recovered flag(s), one per line
+
+    Note over V,R: Harbor verifier phase
+    V->>F: read /app/flags.txt (+ optional agent log paths)
+    V->>V: match vs task expected flags
+    V->>R: reward.txt (fraction solved)
+    V->>R: details.json (solved / unsolved service ids)
+```
+
+`harbor run -p harbor/tasks/<task-path> -a oracle` verifies a task contract
+using `solution/solve.sh`; it does not measure model capability.
+
+## Key files
+
+| Area | Location |
+| -------- | ------- |
+| Harbor tasks (canonical) | `harbor/tasks/` |
+| Attacker base image | `cyberbench/runtime/attacker/` |
+| Gateway reference impl | `cyberbench/runtime/gateway.py` |
+| CTF source archives | `resources/ctf-archives/` (ignored, local build input) |
+
+---
+
+## Legacy manifest runner (fallback)
+
+`bundles/*/manifest.json` predates the Harbor task layout. The Cyber-Bench CLI
+can still load a manifest, generate a per-run `compose.yml`, and drive an
+in-process agent or OpenCode backend. **Use Harbor for new task work**; keep
+manifests only when you need the older runner, transcript viewer integration, or
+historical comparison against `runs/` artifacts.
+
+The container topology is the same as Harbor (`target` gateway + challenge
+services on a shared network). Differences:
+
+| | Harbor (canonical) | Manifest runner (fallback) |
+| --- | --- | --- |
+| Agent service | `main`, terminal inside container | `attacker`, host `docker compose exec` |
+| Task definition | `harbor/tasks/shared/<id>/lN/` or `harbor/tasks/individual/<id>/lN/` | `bundles/<id>/manifest.json` |
+| Scoring | `/app/flags.txt` + verifier | `submit_flag` tool (HTTP to host scorer) |
+| Run output | `jobs/` | `runs/` |
+
+### Manifest runner components
 
 - **Host process** — `python -m cyberbench.cli run` loads the manifest, writes
   `compose.yml` under the run directory, runs `docker compose up`, then drives
   `AgentRunner` until a terminal status (solved, cost budget, or give up).
-- **Attacker container** (`attacker`) — Long-lived shell environment. The model’s
-  `shell` tool is implemented as `docker compose exec` into this service. Recon
-  and exploitation commands run here (e.g. `curl`, `nmap`). See
-  `cyberbench/runtime/docker.py` and `cyberbench/runtime/attacker/`.
-- **Gateway container** (`target`) — Runs `cyberbench/runtime/gateway.py`. It
-  listens on the manifest’s stable **target ports** (e.g. 8101, 8102, …) and
-  TCP-forwards each to the correct challenge container and its **container
-  port** (e.g. 1337). The map comes from `CYBERBENCH_GATEWAY_MAP`.
-- **Challenge and decoy containers** — One Compose service per `manifest.services`
-  entry. Each bundles a distinct app/stack (different images, env, sometimes
-  `privileged`). They only need to accept traffic from the internal Docker
-  network.
+- **Attacker container** (`attacker`) — Same base image as Harbor's `main`.
+  The model's `shell` tool is implemented as `docker compose exec` into this
+  service. See `cyberbench/runtime/docker.py`.
+- **Gateway and challenges** — Same `target` + gateway map pattern as Harbor.
 
 The model never talks to Docker directly. It receives tool results over the API;
 only **shell** and **submit_flag** are exposed (`cyberbench/runner.py`).
 
-## One session, many targets
-
-A single agent run loops until all **scored** services are flagged or the cost
-budget expires. Containers for every service start **together** under one Compose
-project shared network (`bench`). The attacker reaches challenges by host
-name **`target`** and the manifest-listed ports—not by connecting to each
-service’s Compose hostname on its raw container port unless you do that manually
-inside the attacker.
-
-## Diagram: services and traffic
+### Diagram: manifest runner services and traffic
 
 ```mermaid
 flowchart TB
@@ -45,19 +216,19 @@ flowchart TB
                 s1["Challenge container 1"]
                 s2["Challenge container 2"]
                 sn["More challenges + decoys"]
-                tip["Compose does not publish 8101+ to localhost by default."]
+                tip["Same traffic model as Harbor;\nagent service is named attacker."]
             end
         end
     end
 
-    atk -->|"HTTP(S) to target:8101 etc."| gw
+    atk -->|"HTTP(S) to target:8102 etc."| gw
     gw --> s1
     gw --> s2
     gw --> sn
     atk --- tip
 ```
 
-### One shell request path
+### One shell request path (manifest runner)
 
 ```mermaid
 sequenceDiagram
@@ -71,7 +242,7 @@ sequenceDiagram
     R->>A: docker compose exec attacker sh -lc "..."
 
     Note over A,S: Typical probe
-    A->>T: e.g. curl http://target:8101
+    A->>T: e.g. curl http://target:8102
     T->>S: forwarded to backend host/port from gateway map
     S-->>T: HTTP response
     T-->>A: response
@@ -82,114 +253,19 @@ sequenceDiagram
     R-->>M: scoring vs manifest only
 ```
 
-## OpenCode backend (`run-opencode`)
+### OpenCode backend (`run-opencode`)
 
-`python -m cyberbench.cli run-opencode` keeps the **same Docker topology**
-(attacker, gateway `target`, challenge containers on `bench`) as `run`, but
-replaces the in-process `AgentRunner` + model API loop with the **OpenCode
-CLI** running on the **host**.
+`python -m cyberbench.cli run-opencode` keeps the **same Docker topology** as
+`run`, but replaces the in-process `AgentRunner` with the **OpenCode CLI** on
+the host. See `cyberbench/opencode_runner.py` and the OpenCode sections in
+`README.md` for workspace, `bench_shell`, and `submit_flag` details.
 
-- **Per-run execution workspace** — The CLI creates a workspace under
-  `/tmp/cyberbench-opencode/` and passes it to `DockerRuntime` as
-  `attacker_workspace`, so Compose **bind-mounts** that directory to
-  **`/workspace` in the attacker container**. Challenge source trees are not
-  copied there; only helper files and OpenCode config. The workspace is outside
-  the Cyber-Bench git tree so OpenCode cannot infer repo-level project context
-  from parent directories.
-- **OpenCode process** — `OpenCodeRunner` runs
-  `opencode run --dir <workspace> --agent cyberbench --model openrouter/<id> ...`
-  via `subprocess`, with `OPENROUTER_API_KEY` set. Agent instructions live in
-  `.opencode/agent/cyberbench.md`; the user prompt includes `TARGETS.md`
-  (gateway URLs like `http://target:<port>/`). The subprocess gets a clean
-  per-run `HOME`, `OPENCODE_CONFIG`, and `OPENCODE_CONFIG_DIR`, plus
-  `OPENCODE_DISABLE_PROJECT_CONFIG=1` and
-  `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=1`, so local `AGENTS.md` / `CLAUDE.md`
-  files from this repository are not loaded.
-- **`./bench_shell`** — A host-executable script in the workspace that runs
-  `docker compose -f <run_dir>/compose.yml -p <project> exec -T attacker sh -lc "..."`.
-  The OpenCode agent config denies plain host bash and only allows bash
-  commands matching `./bench_shell *` or `./submit_flag *`. A
-  `.opencode/plugins/cyberbench-shell-guard.js` hook also rejects bash commands
-  unless they are shaped exactly as one quoted helper invocation, preventing
-  host-side wrappers like `cd ... && ./bench_shell ...` or
-  `./bench_shell ... | head`. Recon therefore executes inside the attacker
-  container (same as the API runner’s shell tool), including
-  `curl http://target:...`.
-- **`./submit_flag`** — A small Python helper that `POST`s `{"flag": "..."}` to
-  a local **scoring HTTP server** on the host (`ThreadingHTTPServer` on
-  `127.0.0.1`, ephemeral port). The script tries
-  `http://127.0.0.1:.../submit` first (when OpenCode runs it on the host),
-  then `http://host.docker.internal:.../submit` (from inside the attacker,
-  via `extra_hosts: host.docker.internal:host-gateway` on the attacker
-  service). Scoring checks flags only against `manifest.scored_services` /
-  `expected_flags` (no round trip to challenge containers).
-
-### Diagram: OpenCode control flow
-
-```mermaid
-flowchart LR
-    subgraph Host["Host machine"]
-        CLI["cli run-opencode"]
-        OC["OpenCode CLI\n(opencode run)"]
-        WS["Run workspace\n(bench_shell, submit_flag,\n.opencode/, TARGETS.md)"]
-        SCR["ScoringServer\nHTTP POST /submit"]
-        subgraph Docker["Docker (compose)"]
-            ATK["attacker\n/workspace = WS mount"]
-            GW["target gateway"]
-            CH["Challenges + decoys"]
-        end
-    end
-
-    CLI -->|"up / down"| Docker
-    CLI --> OC
-    OC <-->|"cwd = workspace"| WS
-    OC -->|"subprocess: ./bench_shell 'cmd'"| WS
-    WS -->|"docker compose exec attacker"| ATK
-    ATK -->|"curl http://target:port"| GW
-    GW --> CH
-    OC -->|"./submit_flag 'FLAG'"| WS
-    WS -->|POST JSON| SCR
-    SCR -->|"compare to manifest"| SCR
-```
-
-### Diagram: `bench_shell` and `submit_flag`
-
-```mermaid
-sequenceDiagram
-    participant OC as OpenCode (host)
-    participant BS as bench_shell (host)
-    participant DC as docker compose
-    participant A as attacker container
-    participant T as target gateway
-    participant SF as submit_flag script
-    participant S as ScoringServer (host)
-
-    OC->>BS: run probe command
-    BS->>DC: exec -T attacker sh -lc ...
-    DC->>A: command runs
-    A->>T: HTTP e.g. curl http://target:8101
-    T-->>A: response
-    A-->>DC: stdout/stderr
-    DC-->>BS: captured output
-    BS-->>OC: exit + output
-
-    OC->>SF: ./submit_flag "candidate"
-    alt running on host
-        SF->>S: POST http://127.0.0.1:.../submit
-    else running inside attacker (same mount)
-        SF->>S: POST http://host.docker.internal:.../submit
-    end
-    S-->>SF: JSON correct / incorrect
-    SF-->>OC: printed result
-```
-
-## Key files
+### Manifest runner key files
 
 | Area | Location |
 | -------- | ------- |
 | Compose generation | `cyberbench/runtime/docker.py` |
-| TCP forwarding | `cyberbench/runtime/gateway.py` |
 | Agent loop & tools | `cyberbench/runner.py` |
-| OpenCode runner | `cyberbench/opencode_runner.py`, CLI `run-opencode` in `cyberbench/cli.py` |
+| OpenCode runner | `cyberbench/opencode_runner.py` |
 | CLI orchestration | `cyberbench/cli.py` |
-| Bundle schema & ports | `cyberbench/manifest.py`, bundle `manifest.json` |
+| Bundle schema | `cyberbench/manifest.py`, `bundles/*/manifest.json` |
