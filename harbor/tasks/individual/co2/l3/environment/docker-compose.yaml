@@ -25,7 +25,7 @@ services:
     expose:
       - "1337"
     build:
-      context: "../../../../../../resources/ctf-archives/downunderctf-2024/web/co2/src"
+      context: "../../../../../assets/web-5/sources/co2"
     environment:
       flag: "false"
     networks:

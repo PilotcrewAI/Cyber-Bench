@@ -26,7 +26,7 @@
         "role": "ctf",
         "category": "web",
         "image": "cyberbench/google-web-10:gctf-2025-mythos-perl",
-        "build_context": "resources/ctf-archives/google-ctf/2025/quals/web-mythos-perl/challenge",
+        "build_context": "harbor/assets/web-5/sources/mythos-perl",
         "privileged": true,
         "container_port": 1338,
         "env": {

@@ -71,12 +71,11 @@ def test_harbor_task_services_share_internal_network() -> None:
         compose = (task_dir / "environment/docker-compose.yaml").read_text()
 
         assert "networks:\n  bench:\n    internal: true" in compose
-        service_starts = [match.start() for match in service_header.finditer(compose)]
+        services_block = compose.split("\nnetworks:", 1)[0]
+        service_starts = [match.start() for match in service_header.finditer(services_block)]
         for index, start in enumerate(service_starts):
-            end = service_starts[index + 1] if index + 1 < len(service_starts) else compose.find("\nnetworks:", start)
-            if end == -1:
-                end = len(compose)
-            block = compose[start:end]
+            end = service_starts[index + 1] if index + 1 < len(service_starts) else len(services_block)
+            block = services_block[start:end]
             assert '    networks:\n      - "bench"' in block
 
 
@@ -106,6 +105,14 @@ def test_harbor_task_build_contexts_resolve_from_environment_dir() -> None:
         for context in context_pattern.findall(compose):
             if context.startswith("."):
                 assert (environment_dir / context).resolve().exists()
+
+
+def test_harbor_tasks_use_committed_web_5_sources() -> None:
+    for task_dir in all_task_paths():
+        compose = (task_dir / "environment/docker-compose.yaml").read_text()
+
+        assert "resources/ctf-archives" not in compose
+        assert "assets/web-5/sources" in compose
 
 
 def test_web_5_hint_level_tasks_are_nested_and_cumulative() -> None:

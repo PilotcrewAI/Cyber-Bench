@@ -29,7 +29,7 @@ services:
     expose:
       - "1337"
     build:
-      context: "../../../../../../resources/ctf-archives/google-ctf/2025/quals/web-lost-in-transliteration/challenge"
+      context: "../../../../../assets/web-5/sources/lost-transliteration"
     privileged: true
     environment:
       FLAG: "CTF{even_in_2025_charsetsAreTricky}"
@@ -40,7 +40,7 @@ services:
     expose:
       - "1338"
     build:
-      context: "../../../../../../resources/ctf-archives/google-ctf/2025/quals/web-mythos-perl/challenge"
+      context: "../../../../../assets/web-5/sources/mythos-perl"
     privileged: true
     environment:
       FLAG: "CTF{I_like_my_packages_like_I_like_my_python_classes_like_I_like_my_javascript_objects...polluted.Anyway_hope_to_see_some_of_yall_in_mexico_city!}"
@@ -51,7 +51,7 @@ services:
     expose:
       - "1337"
     build:
-      context: "../../../../../../resources/ctf-archives/downunderctf-2024/web/co2/src"
+      context: "../../../../../assets/web-5/sources/co2"
     environment:
       flag: "false"
     networks:
@@ -61,7 +61,7 @@ services:
     expose:
       - "1337"
     build:
-      context: "../../../../../../resources/ctf-archives/downunderctf-2024/web/sniffy/src"
+      context: "../../../../../assets/web-5/sources/sniffy"
     networks:
       - "bench"
   hkcert-2024-webpage-to-pdf-1:
@@ -69,7 +69,7 @@ services:
     expose:
       - "5000"
     build:
-      context: "../../../../../../resources/ctf-archives/hkcert-ctf/CTF-2024/52a-webpage-to-pdf-1/env/chal"
+      context: "../../../../../assets/web-5/sources/webpage-to-pdf-1"
     networks:
       - "bench"
 networks:

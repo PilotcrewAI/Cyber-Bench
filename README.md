@@ -127,9 +127,8 @@ See `docs/architecture.md` for container topology and grading flow diagrams.
 | 8112 | `ductf-2024-sniffy` | DownUnderCTF 2024 |
 | 8113 | `hkcert-2024-webpage-to-pdf-1` | HKCERT CTF 2024 |
 
-After downloading the required public source archives (see below), build the
-challenge images referenced by each task's `environment/docker-compose.yaml`,
-then run oracle checks before model calibration.
+Web-5 Harbor tasks build from committed source contexts under
+`harbor/assets/web-5/sources/`. Run oracle checks before model evals.
 
 Add new Harbor tasks under `harbor/tasks/` once the service has been validated
 in isolation and documented in `REPORT.md`.
@@ -149,12 +148,13 @@ Defaults to http://127.0.0.1:8765/. Use **Harbor jobs** for
 Optional flags: `--port`, `--jobs-dir`, `--runs-dir`, `--repo-root`
 (see `python transcript-viewer/server.py --help`).
 
-## Public Source Archives
+## Public Source Archives (Legacy)
 
 Raw public CTF archives are configured in
 `sources/public_web_ctf_sources.json` and download into
-`resources/ctf-archives/`. The current Web-5 Harbor tasks need Google CTF,
-DownUnderCTF 2024, and HKCERT CTF sources:
+`resources/ctf-archives/`. The checked Web-5 Harbor tasks do not require this
+download path; they use committed copies under `harbor/assets/web-5/sources/`.
+Use the downloader when importing or validating additional source archives:
 
 ```bash
 python scripts/download_sources.py --source-id google-ctf
@@ -213,6 +213,6 @@ historical comparison against existing `runs/` artifacts.
 ## Assets
 
 Raw public CTF downloads belong under ignored `resources/ctf-archives/`.
-Committed files should be Harbor task directories under `harbor/tasks/`, runner
-code, import scripts, and documentation. Legacy manifests under `bundles/` are
-kept for the fallback runner only.
+Committed Web-5 challenge source contexts live under
+`harbor/assets/web-5/sources/` so Harbor tasks can build without local archive
+setup.

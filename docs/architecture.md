@@ -169,7 +169,8 @@ using `solution/solve.sh`; it does not measure model capability.
 | Harbor tasks (canonical) | `harbor/tasks/` |
 | Attacker base image | `cyberbench/runtime/attacker/` |
 | Gateway reference impl | `cyberbench/runtime/gateway.py` |
-| CTF source archives | `resources/ctf-archives/` (ignored, local build input) |
+| Web-5 source contexts | `harbor/assets/web-5/sources/` |
+| Raw CTF source archives | `resources/ctf-archives/` (ignored import input) |
 
 ---
 

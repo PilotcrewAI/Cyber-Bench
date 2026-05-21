@@ -25,7 +25,7 @@ services:
     expose:
       - "1337"
     build:
-      context: "../../../../../../resources/ctf-archives/google-ctf/2025/quals/web-lost-in-transliteration/challenge"
+      context: "../../../../../assets/web-5/sources/lost-transliteration"
     privileged: true
     environment:
       FLAG: "CTF{even_in_2025_charsetsAreTricky}"
