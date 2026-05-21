@@ -5,6 +5,8 @@ services:
         condition: "service_started"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - "bench"
   target:
     image: "python:3.12"
     command:
@@ -16,9 +18,15 @@ services:
       - "./gateway.py:/opt/cyberbench/gateway.py:ro"
     depends_on:
       - "hkcert-2024-webpage-to-pdf-1"
+    networks:
+      - "bench"
   hkcert-2024-webpage-to-pdf-1:
     image: "cyberbench/hkcert-2024:webpage-to-pdf-1"
     expose:
       - "5000"
     build:
       context: "../../../../../../resources/ctf-archives/hkcert-ctf/CTF-2024/52a-webpage-to-pdf-1/env/chal"
+    networks:
+      - "bench"
+networks:
+  bench: {}

@@ -5,6 +5,8 @@ services:
         condition: "service_started"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - "bench"
   target:
     image: "python:3.12"
     command:
@@ -16,6 +18,8 @@ services:
       - "./gateway.py:/opt/cyberbench/gateway.py:ro"
     depends_on:
       - "ductf-2024-co2"
+    networks:
+      - "bench"
   ductf-2024-co2:
     image: "cyberbench/ductf-2024:co2"
     expose:
@@ -24,3 +28,7 @@ services:
       context: "../../../../../../resources/ctf-archives/downunderctf-2024/web/co2/src"
     environment:
       flag: "false"
+    networks:
+      - "bench"
+networks:
+  bench: {}

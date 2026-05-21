@@ -85,17 +85,35 @@ Build the attacker base image once if it is not already present locally:
 docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
 ```
 
-Check task contracts with Harbor's oracle agent:
+Warm all current Web-5 images once before model runs:
 
 ```bash
-harbor run -p harbor/tasks/shared/web-5/l0 -a oracle
-harbor run -p harbor/tasks/shared/web-5/l4 -a oracle
-harbor run -p harbor/tasks/individual/co2/l0 -a oracle
-harbor run -p harbor/tasks/individual/sniffy/l4 -a oracle
+source .venv/bin/activate
+docker build -t cyberbench/attacker:latest cyberbench/runtime/attacker
+docker pull python:3.12
+COMPOSE=$(python -m cyberbench.cli prepare-run bundles/web-5/manifest.json)
+docker compose -f "$COMPOSE" build
+
+harbor run --path harbor/tasks/shared/web-5/l0 --agent oracle --force-build
 ```
 
 Oracle runs validate environment and verifier wiring via `solution/solve.sh`;
 they do not measure model capability.
+
+Run Web-5 with Harbor's Terminus-2 model agent:
+
+```bash
+source .venv/bin/activate
+set -a && source .env && set +a
+
+harbor run \
+  --path harbor/tasks/shared/web-5/l4 \
+  --agent terminus-2 \
+  --model openrouter/openai/gpt-5.5
+```
+
+Harbor writes these run artifacts under `jobs/`. The Web-5 Harbor tasks
+set `agent.timeout_sec = 3600.0`, so each attempt gets a 60 minute agent time budget.
 
 See `docs/architecture.md` for container topology and grading flow diagrams.
 

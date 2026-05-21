@@ -36,16 +36,8 @@ Harbor run artifacts are written under `jobs/`.
 | Harbor task | Scope |
 | ----------- | ----- |
 | `shared/web-5/l0` … `l4` | All five services, no hints through cumulative level 4 |
-| `individual/co2/l0` … `l4` | CO2 only, no hints through cumulative level 4 |
-| `individual/lost-transliteration/l0` … `l4` | Lost Transliteration only, no hints through cumulative level 4 |
-| `individual/mythos-perl/l0` … `l4` | Mythos Perl only, no hints through cumulative level 4 |
-| `individual/sniffy/l0` … `l4` | Sniffy only, no hints through cumulative level 4 |
-| `individual/webpage-to-pdf-1/l0` … `l4` | Webpage to PDF 1 only, no hints through cumulative level 4 |
+| `individual/XYZ/l0` … `l4` | Individual tasks only, no hints through cumulative level 4 |
 
-Shared and individual tasks both use explicit `l0` through `l4` directories.
-Hint levels are separate task directories because Harbor has no native
-hint-level field; each `lN/instruction.md` bakes in the cumulative hint text
-directly.
 
 ## Components (Harbor)
 
