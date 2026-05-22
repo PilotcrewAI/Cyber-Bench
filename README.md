@@ -27,7 +27,7 @@ fallback; see [Legacy (fallback)](#legacy-fallback).
   `opencode` command is available (use `sudo` for `-g` if your Node install is
   system-wide).
 
-**Useful extras:** `git` (clone), `jq` (inspect `result.json` under `runs/`).
+**Useful extras:** `git` (clone), `jq`.
 
 
 ## Configuration
