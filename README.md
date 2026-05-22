@@ -126,9 +126,6 @@ See `docs/architecture.md` for container topology and grading flow diagrams.
 Web-5 Harbor tasks build from committed source contexts under
 `harbor/assets/web-5/sources/`. Run oracle checks before model evals.
 
-Add new Harbor tasks under `harbor/tasks/` once the service has been validated
-in isolation and documented in `REPORT.md`.
-
 ## Transcript viewer
 
 For an interactive step-through of agent turns (plus the run summary from
