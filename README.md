@@ -69,7 +69,6 @@ harbor run \
   --force-build \
   --job-name flat_all_tasks_oracle \
   --jobs-dir jobs/flat-task-oracle \
-  -n 2
 ```
 
 Run one Web-5 task:

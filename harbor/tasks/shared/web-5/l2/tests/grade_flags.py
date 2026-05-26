@@ -38,7 +38,8 @@ def main() -> int:
             solved.append(service_id)
 
     total = len(EXPECTED)
-    reward = len(solved) / total if total else 0.0
+    all_solved = len(solved) == total and total > 0
+    reward = 1.0 if all_solved else 0.0
     details = {
         "reward": reward,
         "solved_service_ids": sorted(solved),
@@ -47,7 +48,7 @@ def main() -> int:
     }
     Path("/logs/verifier/reward.txt").write_text(f"{reward}\n")
     Path("/logs/verifier/details.json").write_text(json.dumps(details, indent=2, sort_keys=True))
-    return 0 if solved else 1
+    return 0 if all_solved else 1
 
 
 def read_submissions() -> set[str]:
