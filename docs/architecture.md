@@ -1,272 +1,199 @@
-# Runtime architecture
+# Runtime Architecture
 
-This document describes how Cyber-Bench web CTF tasks run in Docker. **Harbor /
-Terminal-Bench task directories under `harbor/tasks/` are the canonical format
-for task development and evaluation.** Each task is a self-contained directory
-with instructions, Compose environment, verifier, and oracle solution.
+Cyber-Bench runs the flat standalone task packages under `tasks/` with Harbor.
+Each direct child of `tasks/` is a complete runnable task directory.
 
-The legacy manifest runner (`cyberbench.cli run`, `run-opencode`) remains
-available for older calibration workflows; see [Legacy manifest runner (fallback)](#legacy-manifest-runner-fallback) at the end.
+## Flat Task Contract
 
-## Harbor task layout
+Every task package has this shape:
 
-Each checked task under `harbor/tasks/shared/<task-id>/lN/` or
-`harbor/tasks/individual/<task-id>/lN/` has the same structure:
+```text
+tasks/<task_name>/
+├── instruction.md
+├── task.toml
+├── environment/
+│   ├── Dockerfile
+│   └── docker-compose.yaml
+├── solution/
+│   └── solve.sh
+└── tests/
+    └── test.sh
+```
 
-| Harbor file | Purpose |
-| ----------- | ------- |
-| `instruction.md` | Agent-facing prompt with target URLs and grading contract. |
-| `task.toml` | Harbor metadata, timeouts, and environment settings. |
-| `environment/Dockerfile` | Builds Harbor's `main` agent container from `cyberbench/attacker:latest`. |
-| `environment/docker-compose.yaml` | Challenge Compose overlay merged with Harbor's base file. |
-| `environment/gateway.py` | TCP gateway (same logic as `cyberbench/runtime/gateway.py`). |
-| `tests/test.sh`, `tests/grade_flags.py` | Verifier and exact-match flag scorer. |
-| `solution/solve.sh` | Oracle solution for Harbor contract checks. |
+Web-5 packages also include local challenge source copies under
+`environment/assets/`. Compose build contexts must resolve inside the same task
+directory. Task packages must not depend on shared source paths at runtime.
 
-Run a task with Harbor:
+The `main` service is explicitly defined in every
+`environment/docker-compose.yaml`:
+
+```yaml
+services:
+  main:
+    build:
+      context: "."
+    command:
+      - "sh"
+      - "-c"
+      - "sleep infinity"
+```
+
+Run a task with:
 
 ```bash
-harbor run -p harbor/tasks/<task-path> -a <agent>
+harbor run --path tasks/<task_name> --agent oracle --force-build
 ```
 
-Harbor run artifacts are written under `jobs/`.
+Run the full task set with:
 
-### Checked Web-5 task set
-
-| Harbor task | Scope |
-| ----------- | ----- |
-| `shared/web-5/l0` … `l4` | All five services, no hints through cumulative level 4 |
-| `individual/XYZ/l0` … `l4` | Individual tasks only, no hints through cumulative level 4 |
-
-
-## Components (Harbor)
-
-- **Harbor host process** — `harbor run` merges Harbor's base Compose file with
-  the task's `environment/docker-compose.yaml`, starts containers, runs the
-  terminal agent inside `main`, then runs the verifier.
-- **Agent container** (`main`) — Long-lived terminal environment based on
-  `cyberbench/attacker:latest`. The agent runs commands here directly (not via
-  host `docker compose exec`). Recon tools (`curl`, `nmap`, …) are available.
-  Recovered flags go to `/app/flags.txt`.
-- **Gateway container** (`target`) — Runs `environment/gateway.py`. It listens on
-  stable **target ports** (e.g. 8102, 8103, …) and TCP-forwards each to the
-  correct challenge container and its **container port** (e.g. 1337). The map
-  comes from `CYBERBENCH_GATEWAY_MAP` in the task Compose file.
-- **Challenge containers** — One Compose service per scored target. Each bundles
-  a distinct app/stack (different images, env, sometimes `privileged`). They
-  only accept traffic from the internal Docker network.
-
-Grading is file-based: the agent writes flags one per line to `/app/flags.txt`.
-The verifier (`tests/grade_flags.py`) compares candidates against the expected
-flags embedded in the task, writes the fractional reward to
-`/logs/verifier/reward.txt`, and details to `/logs/verifier/details.json`.
-
-## Diagram: Harbor containers and traffic (web-5)
-
-Harbor starts every service in one Compose project on a shared internal network.
-The agent runs **inside** `main`; it reaches challenges through **`target`** on
-stable ports, not by connecting to each service's Compose hostname on its raw
-container port unless it bypasses the gateway manually.
-
-```mermaid
-flowchart TB
-    subgraph Host["Host machine (harbor run)"]
-        subgraph Docker["Docker Compose"]
-            subgraph Net["Shared internal network"]
-                main["main\nHarbor agent terminal\ncyberbench/attacker:latest\n/app/flags.txt · /logs/agent/"]
-                gw["target\npython:3.12 + gateway.py\nlistens :8102 :8103 :8111-8113"]
-                lt["gctf-2025-lost-transliteration\nexpose :1337"]
-                mp["gctf-2025-mythos-perl\nexpose :1338"]
-                co2["ductf-2024-co2\nexpose :1337"]
-                sn["ductf-2024-sniffy\nexpose :1337"]
-                pdf["hkcert-2024-webpage-to-pdf-1\nexpose :5000"]
-                tip["Challenge ports are expose-only.\nGateway ports are not published to localhost."]
-            end
-        end
-    end
-
-    main -->|"HTTP(S) http://target:8102 etc."| gw
-    gw -->|":8102 → lt:1337"| lt
-    gw -->|":8103 → mp:1338"| mp
-    gw -->|":8111 → co2:1337"| co2
-    gw -->|":8112 → sn:1337"| sn
-    gw -->|":8113 → pdf:5000"| pdf
-    main --- tip
+```bash
+harbor run \
+  --path tasks \
+  --agent oracle \
+  --force-build \
+  --job-name flat_all_tasks_oracle \
+  --jobs-dir jobs/flat-task-oracle \
+  -n 2
 ```
 
-Individual Harbor tasks (`individual/co2/l0`, `individual/sniffy/l4`, …) use
-the same `main` + `target` pattern but include only one challenge service and
-one gateway mapping entry.
+## Web-5 Runtime
 
-### Web-5 target surface
+Web-5 tasks run an agent terminal container named `main`, a gateway container
+named `target`, and one or more challenge containers.
 
-From `main`, the shared `web-5` task exposes:
+The agent writes recovered flags to:
+
+```text
+/app/flags.txt
+```
+
+The verifier reads that file, compares candidates against expected flags, and
+writes:
+
+```text
+/logs/verifier/reward.txt
+/logs/verifier/details.json
+```
+
+Shared Web-5 tasks expose these stable URLs inside `main`:
 
 | URL | Service |
-| --- | ------- |
+| --- | --- |
 | `http://target:8102` | Lost Transliteration |
 | `http://target:8103` | Mythos Perl |
 | `http://target:8111` | CO2 |
 | `http://target:8112` | Sniffy |
 | `http://target:8113` | Webpage to PDF 1 |
 
-### One probe inside `main`
-
-```mermaid
-sequenceDiagram
-    participant H as Harbor agent loop
-    participant M as main container
-    participant T as target gateway
-    participant S as challenge container
-
-    H->>M: terminal command e.g. curl
-    M->>T: HTTP http://target:8102
-    T->>S: TCP to gctf-2025-lost-transliteration:1337
-    S-->>T: HTTP response
-    T-->>M: response
-    M-->>H: stdout / stderr
-
-    H->>M: write recovered flags
-    M->>M: /app/flags.txt one flag per line
-
-    Note over M: Verifier phase after agent timeout
-    M->>M: tests/test.sh → grade_flags.py
-    M->>M: /logs/verifier/reward.txt + details.json
-```
-
-### Harbor grading flow
-
-```mermaid
-sequenceDiagram
-    participant A as Agent (in main)
-    participant T as target gateway
-    participant S as Challenge container
-    participant F as /app/flags.txt
-    participant V as grade_flags.py
-    participant R as /logs/verifier/
-
-    A->>T: probe e.g. curl http://target:8102
-    T->>S: TCP forward via gateway map
-    S-->>T: HTTP response
-    T-->>A: response
-
-    A->>F: write recovered flag(s), one per line
-
-    Note over V,R: Harbor verifier phase
-    V->>F: read /app/flags.txt (+ optional agent log paths)
-    V->>V: match vs task expected flags
-    V->>R: reward.txt (fraction solved)
-    V->>R: details.json (solved / unsolved service ids)
-```
-
-`harbor run -p harbor/tasks/<task-path> -a oracle` verifies a task contract
-using `solution/solve.sh`; it does not measure model capability.
-
-## Key files
-
-| Area | Location |
-| -------- | ------- |
-| Harbor tasks (canonical) | `harbor/tasks/` |
-| Attacker base image | `cyberbench/runtime/attacker/` |
-| Gateway reference impl | `cyberbench/runtime/gateway.py` |
-| Web-5 source contexts | `harbor/assets/web-5/sources/` |
-| Raw CTF source archives | `resources/ctf-archives/` (ignored import input) |
-
----
-
-## Legacy manifest runner (fallback)
-
-`bundles/*/manifest.json` predates the Harbor task layout. The Cyber-Bench CLI
-can still load a manifest, generate a per-run `compose.yml`, and drive an
-in-process agent or OpenCode backend. **Use Harbor for new task work**; keep
-manifests only when you need the older runner, transcript viewer integration, or
-historical comparison against `runs/` artifacts.
-
-The container topology is the same as Harbor (`target` gateway + challenge
-services on a shared network). Differences:
-
-| | Harbor (canonical) | Manifest runner (fallback) |
-| --- | --- | --- |
-| Agent service | `main`, terminal inside container | `attacker`, host `docker compose exec` |
-| Task definition | `harbor/tasks/shared/<id>/lN/` or `harbor/tasks/individual/<id>/lN/` | `bundles/<id>/manifest.json` |
-| Scoring | `/app/flags.txt` + verifier | `submit_flag` tool (HTTP to host scorer) |
-| Run output | `jobs/` | `runs/` |
-
-### Manifest runner components
-
-- **Host process** — `python -m cyberbench.cli run` loads the manifest, writes
-  `compose.yml` under the run directory, runs `docker compose up`, then drives
-  `AgentRunner` until a terminal status (solved, cost budget, or give up).
-- **Attacker container** (`attacker`) — Same base image as Harbor's `main`.
-  The model's `shell` tool is implemented as `docker compose exec` into this
-  service. See `cyberbench/runtime/docker.py`.
-- **Gateway and challenges** — Same `target` + gateway map pattern as Harbor.
-
-The model never talks to Docker directly. It receives tool results over the API;
-only **shell** and **submit_flag** are exposed (`cyberbench/runner.py`).
-
-### Diagram: manifest runner services and traffic
+Individual Web-5 tasks use the same `main` + `target` pattern but include only
+one challenge service and one gateway mapping entry.
 
 ```mermaid
 flowchart TB
-    subgraph Host["Host machine"]
-        subgraph Docker["Docker"]
-            subgraph Bench["Docker network: bench"]
-                atk["attacker (model shell exec)"]
-                gw["target (gateway.py)"]
-                s1["Challenge container 1"]
-                s2["Challenge container 2"]
-                sn["More challenges + decoys"]
-                tip["Same traffic model as Harbor;\nagent service is named attacker."]
+    subgraph Host["Host machine: harbor run --path tasks/web_5_l4"]
+        subgraph Docker["Docker Compose project"]
+            subgraph Net["Internal task network"]
+                main["main\nagent terminal\n/app/flags.txt"]
+                target["target\ngateway.py\n:8102 :8103 :8111 :8112 :8113"]
+                lt["lost-transliteration\n:1337"]
+                mp["mythos-perl\n:1338"]
+                co2["co2\n:1337"]
+                sn["sniffy\n:1337"]
+                pdf["webpage-to-pdf-1\n:5000"]
             end
         end
     end
 
-    atk -->|"HTTP(S) to target:8102 etc."| gw
-    gw --> s1
-    gw --> s2
-    gw --> sn
-    atk --- tip
+    main -->|"curl http://target:8102"| target
+    target --> lt
+    target --> mp
+    target --> co2
+    target --> sn
+    target --> pdf
 ```
 
-### One shell request path (manifest runner)
+## Memory-Vul Runtime
 
-```mermaid
-sequenceDiagram
-    participant M as "Model API"
-    participant R as AgentRunner
-    participant A as "attacker container"
-    participant T as "target gateway"
-    participant S as "challenge container"
+Memory-vul tasks run a single `main` container built from the task's
+`environment/Dockerfile`. The Dockerfile uses the public `n132/arvo:*` vulnerable
+base image for that task and removes the bundled `/tmp/poc` before the agent
+runs.
 
-    M->>R: tool_call shell
-    R->>A: docker compose exec attacker sh -lc "..."
+The agent must create:
 
-    Note over A,S: Typical probe
-    A->>T: e.g. curl http://target:8102
-    T->>S: forwarded to backend host/port from gateway map
-    S-->>T: HTTP response
-    T-->>A: response
-    A-->>R: stdout / stderr
-    R-->>M: tool result JSON
-
-    M->>R: tool_call submit_flag
-    R-->>M: scoring vs manifest only
+```text
+/tmp/crash_output.txt
 ```
 
-### OpenCode backend (`run-opencode`)
+The verifier checks the output for deterministic sanitizer evidence such as
+ASAN, MSAN, or UBSan signatures and writes `/logs/verifier/reward.txt`.
 
-`python -m cyberbench.cli run-opencode` keeps the **same Docker topology** as
-`run`, but replaces the in-process `AgentRunner` with the **OpenCode CLI** on
-the host. See `cyberbench/opencode_runner.py` and the OpenCode sections in
-`README.md` for workspace, `bench_shell`, and `submit_flag` details.
+Memory-vul task metadata has `allow_internet = false`, so Harbor applies its
+no-network overlay. The memory-vul compose files intentionally avoid explicit
+network declarations to stay compatible with that overlay.
 
-### Manifest runner key files
+## Package Generation
+
+Flat packages are generated with:
+
+```bash
+source .venv/bin/activate
+python scripts/build_flat_task_packages.py
+```
+
+The generator creates:
+
+- five shared Web-5 packages: `tasks/web_5_l0` ... `tasks/web_5_l4`
+- twenty-five individual Web-5 packages
+- five memory-vul packages
+
+It also copies Web-5 challenge sources into each generated Web-5 package under
+`environment/assets/` and rewrites compose build contexts to those local paths.
+
+## Validation
+
+Use static checks after package generation:
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=. pytest -q tests/test_flat_task_packages.py tests/test_harbor_tasks.py tests/test_manifest.py
+```
+
+Validate compose syntax for every flat task:
+
+```bash
+find tasks -name docker-compose.yaml -print0 | sort -z | while IFS= read -r -d '' compose; do
+  docker compose -f "$compose" config --quiet || exit 1
+done
+```
+
+Use oracle runs for runtime verification:
+
+```bash
+harbor run \
+  --path tasks \
+  --agent oracle \
+  --force-build \
+  --job-name flat_all_tasks_oracle \
+  --jobs-dir jobs/flat-task-oracle \
+  -n 2
+```
+
+If Docker Buildx fails because the default `.docker/buildx/activity` path is
+read-only, rerun with a writable temporary Docker config:
+
+```bash
+mkdir -p /tmp/cyberbench-docker-config
+DOCKER_CONFIG=/tmp/cyberbench-docker-config harbor run --path tasks --agent oracle --force-build
+```
+
+## Key Files
 
 | Area | Location |
-| -------- | ------- |
-| Compose generation | `cyberbench/runtime/docker.py` |
-| Agent loop & tools | `cyberbench/runner.py` |
-| OpenCode runner | `cyberbench/opencode_runner.py` |
-| CLI orchestration | `cyberbench/cli.py` |
-| Bundle schema | `cyberbench/manifest.py`, `bundles/*/manifest.json` |
+| --- | --- |
+| Runnable flat task packages | `tasks/` |
+| Package generator | `scripts/build_flat_task_packages.py` |
+| Flat package regression tests | `tests/test_flat_task_packages.py` |
+| Attacker base image | `cyberbench/runtime/attacker/` |
+| Gateway reference implementation | `cyberbench/runtime/gateway.py` |
+| Oracle job artifacts | `jobs/flat-task-oracle/` |

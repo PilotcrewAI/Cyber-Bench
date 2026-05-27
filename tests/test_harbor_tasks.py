@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -94,6 +95,55 @@ def test_harbor_tasks_use_file_based_grading_contract() -> None:
         assert "/app/flags.txt" in instruction
         assert "/logs/verifier/reward.txt" in grader
         assert "submit_flag" not in instruction
+
+
+def test_shared_web_5_tasks_use_binary_all_flags_reward(tmp_path) -> None:
+    task_dirs = [
+        Path("tasks") / f"web_5_l{level}"
+        for level in range(0, 5)
+    ] + [
+        Path("harbor/tasks/shared/web-5") / f"l{level}"
+        for level in range(0, 5)
+    ]
+
+    for task_dir in task_dirs:
+        grader_path = task_dir / "tests/grade_flags.py"
+        grader = grader_path.read_text()
+
+        assert "reward = len(solved) / total" not in grader
+        assert "all_solved = len(solved) == total and total > 0" in grader
+        assert "reward = 1.0 if all_solved else 0.0" in grader
+        assert "return 0 if all_solved else 1" in grader
+
+        spec = importlib.util.spec_from_file_location(
+            f"grade_flags_{task_dir.as_posix().replace('/', '_').replace('-', '_')}",
+            grader_path,
+        )
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        expected_flags = [flags[0] for flags in module.EXPECTED.values()]
+        reward_path = tmp_path / task_dir.as_posix().replace("/", "_") / "logs/verifier/reward.txt"
+        reward_path.parent.mkdir(parents=True)
+
+        def fake_path(value):
+            return reward_path if value == "/logs/verifier/reward.txt" else reward_path.with_name("details.json")
+
+        module.Path = fake_path
+
+        module.read_submissions = lambda: set()
+        assert module.main() == 1
+        assert reward_path.read_text() == "0.0\n"
+
+        module.read_submissions = lambda: {expected_flags[0], expected_flags[1]}
+        assert module.main() == 1
+        assert reward_path.read_text() == "0.0\n"
+
+        module.read_submissions = lambda: set(expected_flags)
+        assert module.main() == 0
+        assert reward_path.read_text() == "1.0\n"
 
 
 def test_harbor_task_build_contexts_resolve_from_environment_dir() -> None:
