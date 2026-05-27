@@ -152,6 +152,13 @@ It also copies Web-5 challenge sources into each generated Web-5 package under
 
 ## Validation
 
+Build the shared attacker base image before Harbor runtime checks:
+
+```bash
+docker build --pull -t cyberbench/attacker:latest cyberbench/runtime/attacker
+docker run --rm cyberbench/attacker:latest sh -lc 'which curl wget nmap nc dig jq git tmux asciinema'
+```
+
 Use static checks after package generation:
 
 ```bash
