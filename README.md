@@ -26,6 +26,29 @@ Before running Python commands in this repo:
 source .venv/bin/activate
 ```
 
+## Build Attacker Image
+
+Web-5 task Dockerfiles use the shared local attacker base image:
+
+```dockerfile
+FROM cyberbench/attacker:latest
+```
+
+Build it once from the repo root before running Harbor tasks:
+
+```bash
+docker build --pull -t cyberbench/attacker:latest cyberbench/runtime/attacker
+```
+
+Optionally verify that the expected attacker tools are present:
+
+```bash
+docker run --rm cyberbench/attacker:latest sh -lc 'which curl wget nmap nc dig jq git tmux asciinema'
+```
+
+Rebuild this image after changing `cyberbench/runtime/attacker/Dockerfile`, then
+use `--force-build` on Harbor runs so task images rebuild on top of it.
+
 ## Task Layout
 
 The flat task tree contains 35 direct task directories:
