@@ -26,28 +26,16 @@ Before running Python commands in this repo:
 source .venv/bin/activate
 ```
 
-## Build Attacker Image
+## Task Images
 
-Web-5 task Dockerfiles use the shared local attacker base image:
+Web-5 task Dockerfiles are self-contained. Each flat Web-5 package builds its
+`main` agent container directly from `python:3.12` and installs the expected
+recon tools (`curl`, `wget`, `nmap`, `nc`, `dig`, `jq`, `git`, `tmux`,
+`asciinema`, and related basics). There is no separate
+`cyberbench/attacker:latest` prebuild step for current `tasks/` runs.
 
-```dockerfile
-FROM cyberbench/attacker:latest
-```
-
-Build it once from the repo root before running Harbor tasks:
-
-```bash
-docker build --pull -t cyberbench/attacker:latest cyberbench/runtime/attacker
-```
-
-Optionally verify that the expected attacker tools are present:
-
-```bash
-docker run --rm cyberbench/attacker:latest sh -lc 'which curl wget nmap nc dig jq git tmux asciinema'
-```
-
-Rebuild this image after changing `cyberbench/runtime/attacker/Dockerfile`, then
-use `--force-build` on Harbor runs so task images rebuild on top of it.
+Memory-vul task Dockerfiles continue to use their task-specific public
+`n132/arvo:*` vulnerable base images.
 
 ## Task Layout
 

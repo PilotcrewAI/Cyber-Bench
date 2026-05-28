@@ -9,23 +9,16 @@ SHARED_TASK_ID = "web-5"
 
 INDIVIDUAL_TASK_IDS = (
     "co2",
-    "lost-transliteration",
-    "mythos-perl",
+    "lost_transliteration",
+    "mythos_perl",
     "sniffy",
-    "webpage-to-pdf-1",
+    "webpage_to_pdf_1",
 )
 
 
 def all_task_paths() -> tuple[Path, ...]:
-    shared = [
-        Path("harbor/tasks/shared") / SHARED_TASK_ID / f"l{level}"
-        for level in range(0, 5)
-    ]
-    individual = [
-        Path("harbor/tasks/individual") / task / f"l{level}"
-        for task in INDIVIDUAL_TASK_IDS
-        for level in range(0, 5)
-    ]
+    shared = [Path("tasks") / f"web_5_l{level}" for level in range(0, 5)]
+    individual = [Path("tasks") / f"{task}_l{level}" for task in INDIVIDUAL_TASK_IDS for level in range(0, 5)]
     return tuple(shared + individual)
 
 
@@ -42,7 +35,7 @@ def test_checked_harbor_tasks_exist() -> None:
 
 
 def test_web_5_harbor_task_has_shared_environment() -> None:
-    compose = Path("harbor/tasks/shared/web-5/l0/environment/docker-compose.yaml").read_text()
+    compose = Path("tasks/web_5_l0/environment/docker-compose.yaml").read_text()
 
     assert "main:" in compose
     assert "target:" in compose
@@ -57,7 +50,7 @@ def test_web_5_harbor_task_has_shared_environment() -> None:
 
 
 def test_individual_harbor_task_contains_only_its_service() -> None:
-    compose = Path("harbor/tasks/individual/co2/l0/environment/docker-compose.yaml").read_text()
+    compose = Path("tasks/co2_l0/environment/docker-compose.yaml").read_text()
 
     assert "ductf-2024-co2:" in compose
     assert "ductf-2024-sniffy:" not in compose
@@ -98,13 +91,7 @@ def test_harbor_tasks_use_file_based_grading_contract() -> None:
 
 
 def test_shared_web_5_tasks_use_binary_all_flags_reward(tmp_path) -> None:
-    task_dirs = [
-        Path("tasks") / f"web_5_l{level}"
-        for level in range(0, 5)
-    ] + [
-        Path("harbor/tasks/shared/web-5") / f"l{level}"
-        for level in range(0, 5)
-    ]
+    task_dirs = [Path("tasks") / f"web_5_l{level}" for level in range(0, 5)]
 
     for task_dir in task_dirs:
         grader_path = task_dir / "tests/grade_flags.py"
@@ -162,24 +149,34 @@ def test_harbor_tasks_use_committed_web_5_sources() -> None:
         compose = (task_dir / "environment/docker-compose.yaml").read_text()
 
         assert "resources/ctf-archives" not in compose
-        assert "assets/web-5/sources" in compose
+        assert "environment/assets" not in compose
+        assert "context: \"./assets/" in compose
+
+
+def test_web_5_agent_dockerfiles_are_self_contained() -> None:
+    expected = Path("tasks/web_5_l0/environment/Dockerfile").read_text()
+
+    assert expected.startswith("FROM python:3.12\n")
+    assert "cyberbench/attacker:latest" not in expected
+    for tool in ("curl", "wget", "nmap", "netcat-openbsd", "dnsutils", "jq", "git", "tmux", "asciinema"):
+        assert tool in expected
+
+    for task_dir in all_task_paths():
+        dockerfile = (task_dir / "environment/Dockerfile").read_text()
+        assert dockerfile == expected
 
 
 def test_web_5_hint_level_tasks_are_nested_and_cumulative() -> None:
-    task_root = Path("harbor/tasks/shared/web-5")
-    assert not (task_root / "instruction.md").exists()
-    assert not (task_root / "task.toml").exists()
-    assert not tuple(Path("harbor/tasks/shared").glob("web-5-l*"))
-    assert not (task_root / "l5").exists()
+    assert not Path("tasks/web_5_l5").exists()
 
-    base = (task_root / "l0/instruction.md").read_text()
-    task_toml = (task_root / "l0/task.toml").read_text()
+    base = Path("tasks/web_5_l0/instruction.md").read_text()
+    task_toml = Path("tasks/web_5_l0/task.toml").read_text()
     assert "## Hints" not in base
     assert "hint_level = 0" in task_toml
 
     for level in range(1, 5):
-        instruction = (task_root / f"l{level}/instruction.md").read_text()
-        task_toml = (task_root / f"l{level}/task.toml").read_text()
+        instruction = Path(f"tasks/web_5_l{level}/instruction.md").read_text()
+        task_toml = Path(f"tasks/web_5_l{level}/task.toml").read_text()
 
         assert "## Hints" in instruction
         assert f"hint_level = {level}" in task_toml
@@ -191,19 +188,16 @@ def test_web_5_hint_level_tasks_are_nested_and_cumulative() -> None:
 
 def test_individual_hint_level_tasks_are_nested_and_cumulative() -> None:
     for task in INDIVIDUAL_TASK_IDS:
-        task_root = Path("harbor/tasks/individual") / task
-        assert not (task_root / "instruction.md").exists()
-        assert not (task_root / "task.toml").exists()
-        assert not (task_root / "l5").exists()
+        assert not Path(f"tasks/{task}_l5").exists()
 
-        l0_instruction = (task_root / "l0/instruction.md").read_text()
-        l0_toml = (task_root / "l0/task.toml").read_text()
+        l0_instruction = Path(f"tasks/{task}_l0/instruction.md").read_text()
+        l0_toml = Path(f"tasks/{task}_l0/task.toml").read_text()
         assert "## Hints" not in l0_instruction
         assert "hint_level = 0" in l0_toml
 
         for level in range(1, 5):
-            instruction = (task_root / f"l{level}/instruction.md").read_text()
-            task_toml = (task_root / f"l{level}/task.toml").read_text()
+            instruction = Path(f"tasks/{task}_l{level}/instruction.md").read_text()
+            task_toml = Path(f"tasks/{task}_l{level}/task.toml").read_text()
             assert "## Hints" in instruction
             assert f"hint_level = {level}" in task_toml
             for included in range(1, level + 1):
