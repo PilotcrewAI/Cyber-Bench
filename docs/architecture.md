@@ -61,6 +61,11 @@ harbor run \
 Web-5 tasks run an agent terminal container named `main`, a gateway container
 named `target`, and one or more challenge containers.
 
+Each Web-5 `main` container is built by that task's own
+`environment/Dockerfile` from `python:3.12`. The Dockerfile installs the common
+attacker/recon tools directly, so current flat `tasks/` packages do not require
+a prebuilt `cyberbench/attacker:latest` image.
+
 The agent writes recovered flags to:
 
 ```text
@@ -132,38 +137,13 @@ Memory-vul task metadata has `allow_internet = false`, so Harbor applies its
 no-network overlay. The memory-vul compose files intentionally avoid explicit
 network declarations to stay compatible with that overlay.
 
-## Package Generation
-
-Flat packages are generated with:
-
-```bash
-source .venv/bin/activate
-python scripts/build_flat_task_packages.py
-```
-
-The generator creates:
-
-- five shared Web-5 packages: `tasks/web_5_l0` ... `tasks/web_5_l4`
-- twenty-five individual Web-5 packages
-- five memory-vul packages
-
-It also copies Web-5 challenge sources into each generated Web-5 package under
-`environment/assets/` and rewrites compose build contexts to those local paths.
-
 ## Validation
 
-Build the shared attacker base image before Harbor runtime checks:
-
-```bash
-docker build --pull -t cyberbench/attacker:latest cyberbench/runtime/attacker
-docker run --rm cyberbench/attacker:latest sh -lc 'which curl wget nmap nc dig jq git tmux asciinema'
-```
-
-Use static checks after package generation:
+Use static checks after task changes:
 
 ```bash
 source .venv/bin/activate
-PYTHONPATH=. pytest -q tests/test_flat_task_packages.py tests/test_harbor_tasks.py tests/test_manifest.py
+PYTHONPATH=. pytest -q tests/test_harbor_tasks.py tests/test_manifest.py
 ```
 
 Validate compose syntax for every flat task:
@@ -199,8 +179,6 @@ DOCKER_CONFIG=/tmp/cyberbench-docker-config harbor run --path tasks --agent orac
 | Area | Location |
 | --- | --- |
 | Runnable flat task packages | `tasks/` |
-| Package generator | `scripts/build_flat_task_packages.py` |
-| Flat package regression tests | `tests/test_flat_task_packages.py` |
-| Attacker base image | `cyberbench/runtime/attacker/` |
+| Flat package regression tests | `tests/test_harbor_tasks.py` |
 | Gateway reference implementation | `cyberbench/runtime/gateway.py` |
 | Oracle job artifacts | `jobs/flat-task-oracle/` |
